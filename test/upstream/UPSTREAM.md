@@ -25,12 +25,13 @@ d10e57499d9c91795eac315333e39998fcfb9e609b8f52831c49cdc25aeb841c  IRelayEntrypoi
 
 ## Selectors pinned from these files
 
+RelayFeeSkim calls two Relay members. The vendored `IRelayEntrypoint.sol` declares more (`compound`,
+`notifyReward`, `TOKEN`, `accountedBalance`, `KEEPER`, `owner`, `hasAnyRole`); they are kept for
+fidelity but nothing here depends on them.
+
 | Member | Selector | Source |
 |---|---|---|
 | `pull(address,uint256)` | `0xf2d5d56b` | `IRelayEntrypoint` |
-| `accountedBalance(address)` | `0xa7838c8a` | `IRelayEntrypoint` |
-| `KEEPER()` | `0x862a179e` | `IRelayEntrypoint` |
-| `hasAnyRole(address,uint256)` | `0x514e62fc` | `IRelayEntrypoint` |
 | `claimRewards(uint256,uint256,(address,uint256)[],(address,uint256,uint256)[])` | `0xfa6a8ba9` | `IRelay` + `ILeafVoter` structs |
 
 ## Refreshing the pin

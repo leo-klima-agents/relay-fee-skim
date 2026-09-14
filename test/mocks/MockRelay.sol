@@ -8,12 +8,11 @@ interface IMintable {
     function mint(address to, uint256 amount) external;
 }
 
-/// @notice Mirrors the Relay semantics RelayFeeSkim depends on (RelayRoles, RelayBase.pull,
-///         RelayRewardsLib.pull / claimRewards, and the Voter's claim validation) with the minimum
-///         machinery to drive them in tests.
+/// @notice Mirrors the Relay semantics RelayFeeSkim depends on (RelayRoles' entrypoint bits,
+///         RelayBase.pull, RelayRewardsLib.pull / claimRewards, and the Voter's claim validation) with
+///         the minimum machinery to drive them in tests.
+// forge-lint: disable-next-item(locked-ether) -- claimRewards is payable to mirror upstream; value is always rejected
 contract MockRelay {
-    uint256 public constant KEEPER = 1 << 0;
-    uint256 public constant VOTER_ROLE = 1 << 1;
     uint256 public constant COMPOUNDER = 1 << 2;
     uint256 public constant CONVERTER = 1 << 3;
 
@@ -105,25 +104,32 @@ contract MockRelay {
     }
 }
 
-/// @notice Relay stub whose `pull` is a no-op and whose gates always pass, so the skimmer's own
-///         forward-to-sink transfer is the only thing under test.
+/// @notice Relay stub whose `pull` is a no-op, so the skimmer's own forward-to-sink transfer is the only
+///         transfer that runs. `claimRewards` still mints the configured amount so there is a delta to tax.
+// forge-lint: disable-next-item(locked-ether) -- payable to match the interface; never receives value
 contract NoopPullRelay {
-    uint256 public constant KEEPER = 1 << 0;
+    mapping(address token => uint256 amount) public claimable;
 
-    function hasAnyRole(address, uint256) external pure returns (bool) {
-        return true;
+    function setClaimable(address token, uint256 amount) external {
+        claimable[token] = amount;
     }
 
-    function accountedBalance(address) external pure returns (uint256) {
-        return 0;
-    }
-
+    // forge-lint: disable-next-line(empty-block) -- the no-op is the point of this stub
     function pull(address, uint256) external {}
 
     function claimRewards(
         uint256,
         uint256,
-        IRelayEntrypoint.FeeClaim[] calldata,
+        IRelayEntrypoint.FeeClaim[] calldata feeClaims,
         IRelayEntrypoint.IncentiveClaim[] calldata
-    ) external payable {}
+    ) external payable {
+        // Mints only for the tokens named by the claims' `votingRewardsManager`, reused here as the token slot.
+        for (uint256 i; i < feeClaims.length; ++i) {
+            address token = feeClaims[i].votingRewardsManager;
+            uint256 amount = claimable[token];
+            if (amount == 0) continue;
+            claimable[token] = 0;
+            IMintable(token).mint(address(this), amount);
+        }
+    }
 }

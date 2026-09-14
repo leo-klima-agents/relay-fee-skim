@@ -25,6 +25,8 @@ contract Deploy is Script {
 
     /// @notice Constructor-args-appended init code for the given parameters.
     function initCode(uint256 feeBps, address feeSink) public pure returns (bytes memory) {
+        // Raw concatenation is exactly what CREATE2 init code is; no hashing of ambiguous fields happens here.
+        // forge-lint: disable-next-line(encode-packed-collision)
         return abi.encodePacked(type(RelayFeeSkim).creationCode, abi.encode(feeBps, feeSink));
     }
 
