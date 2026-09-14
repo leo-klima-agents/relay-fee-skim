@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  FOUNDRY_PROFILE: ci
+  FOUNDRY_VERSION: v1.5.1
+
+jobs:
+  check:
+    name: fmt, build, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+      - name: forge fmt --check
+        run: forge fmt --check
+      - name: forge build --sizes
+        run: forge build --sizes
+      - name: forge test (ci fuzz profile)
+        run: forge test -vvv
+
+  upstream-pin:
+    name: vendored upstream sha256
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: sha256sum -c
+        working-directory: test/upstream
+        run: sha256sum -c SHA256SUMS
+      - name: UPSTREAM.md lists the same hashes
+        working-directory: test/upstream
+        run: |
+          while read -r hash file; do
+            grep -q "$hash  $file" UPSTREAM.md || { echo "::error::$file hash missing from UPSTREAM.md"; exit 1; }
+          done < SHA256SUMS
+
+  reproducible-build:
+    name: reproducible build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+      - name: build #1 from clean
+        run: |
+          forge clean
+          forge build --force
+          jq -r '.deployedBytecode.object' out/RelayFeeSkim.sol/RelayFeeSkim.json > /tmp/runtime1.hex
+          jq -r '.bytecode.object' out/RelayFeeSkim.sol/RelayFeeSkim.json > /tmp/creation1.hex
+      - name: build #2 from clean
+        run: |
+          forge clean
+          forge build --force
+          jq -r '.deployedBytecode.object' out/RelayFeeSkim.sol/RelayFeeSkim.json > /tmp/runtime2.hex
+          jq -r '.bytecode.object' out/RelayFeeSkim.sol/RelayFeeSkim.json > /tmp/creation2.hex
+      - name: builds are identical
+        run: |
+          cmp /tmp/runtime1.hex /tmp/runtime2.hex
+          cmp /tmp/creation1.hex /tmp/creation2.hex
+      - name: matches recorded hashes
+        run: ./script/check-hashes.sh
+      - name: standard JSON input is current
+        run: |
+          forge verify-contract --show-standard-json-input 0x0000000000000000000000000000000000000001 \
+            src/RelayFeeSkim.sol:RelayFeeSkim > /tmp/standard-input.json
+          jq -S . /tmp/standard-input.json > /tmp/a.json
+          jq -S . verification/RelayFeeSkim.standard-input.json > /tmp/b.json
+          cmp /tmp/a.json /tmp/b.json || { echo "::error::verification/RelayFeeSkim.standard-input.json is stale; regenerate it (see README)"; exit 1; }
