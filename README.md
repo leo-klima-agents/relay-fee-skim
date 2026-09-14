@@ -6,10 +6,10 @@ no `notifyReward`. MIT, Foundry, zero runtime dependencies.
 
 ```
 claimAndSkim(relay, feeClaims, incentiveClaims, tokens):   # anyone; at least one claim, maxCheckpoints > 0
-    before = relay.balanceOf(tokens); relay.claimRewards(chainid, 0, feeClaims, incentiveClaims)
-    for t in tokens: fee = (balanceOf(t) - before[t]) * FEE_BPS / 10_000; relay.pull(t, fee); t.transfer(FEE_SINK, all held)
-skim(relay, token):                                         # relay's KEEPER only
-    fee = (balanceOf(token) - accountedBalance(token)) * FEE_BPS / 10_000; relay.pull(token, fee); token.transfer(FEE_SINK, all held)
+    before = relay.balanceOf(tokens)                       # tokens strictly ascending
+    relay.claimRewards(chainid, 0, feeClaims, incentiveClaims)
+    for t in tokens: fee = (relay.balanceOf(t) - before[t]) * FEE_BPS / 10_000
+                     relay.pull(t, fee); t.transfer(FEE_SINK, everything this contract holds)
 ```
 
 ## Guarantees
@@ -17,53 +17,42 @@ skim(relay, token):                                         # relay's KEEPER onl
 | Property | Where it is enforced |
 |---|---|
 | Fee rate is at most 10% and fixed for the life of the contract | `MAX_FEE_BPS = 1_000` in source; `FEE_BPS` is an immutable checked in the constructor |
-| One call moves at most `FEE_BPS / 10_000` of its base | `_take` computes `fee = base * FEE_BPS / BPS` and pulls exactly `fee`; fuzz-tested in `test/RelayFeeSkim.t.sol` |
-| Rewards already notified to holders are unreachable | The Relay's own `pull` reverts above `balanceOf(relay) - accountedBalance(token)`; `skim` also subtracts `accountedBalance` before computing the fee |
+| One call moves at most `FEE_BPS / 10_000` of the rewards it claimed | `_take` computes `fee = delta * FEE_BPS / BPS` and pulls exactly `fee`; fuzz-tested in `test/RelayFeeSkim.t.sol` |
+| Balances already on the Relay are never touched | Only the balance delta produced by this call's own `claimRewards` is taxed; the Relay's `pull` additionally reverts above `balanceOf(relay) - accountedBalance(token)`, so notified rewards are unreachable |
 | Nothing ever strands on this contract | After every pull the entire held balance of that token, not just `fee`, is forwarded to `FEE_SINK` |
 | No admin surface | No owner, no setters, no storage, no `receive`, no `fallback`, no `notifyReward`, no swaps. The only mutable state is a transient reentrancy lock |
-| Untrusted inputs cannot extract value | `relay` and `tokens` are caller-supplied. A fake relay or hostile token can only cause the contract to forward whatever it already holds to the fixed sink. Both entry points are `nonReentrant` |
+| Untrusted inputs cannot extract value | `relay` and `tokens` are caller-supplied. A fake relay or hostile token can only cause the contract to forward whatever it already holds to the fixed sink. The lock blocks a hostile token from reentering to tax another token twice |
 
-## The two paths
+## How it collects
 
-**`claimAndSkim` is permissionless.** It reads the Relay's balance of each listed token, calls the Relay's
-own `claimRewards` for the root chain (no value), and taxes only the balance delta the claim produced. A
-repeat call finds no delta and reverts with `NoFee`. Anyone can run it, so fees can be collected as soon as
-rewards are claimable; whoever calls it pays the claim gas. Tokens must be passed strictly ascending so a
-token cannot be listed twice and have its delta taxed twice. The claim arrays are forwarded to the Voter
+`claimAndSkim` is permissionless. It reads the Relay's balance of each listed token, calls the Relay's own
+`claimRewards` for the root chain (no value), and taxes only the balance delta the claim produced. A repeat
+call finds no delta and reverts with `NoFee`. Anyone can run it, so fees can be collected as soon as rewards
+are claimable; whoever calls it pays the claim gas. Tokens must be passed strictly ascending so a token
+cannot be listed twice and have its delta taxed twice. The claim arrays are forwarded to the Voter
 unchanged, and the Voter rejects a request with no claims at all (`EmptyClaimRewardsParams`) and any claim
 whose `maxCheckpoints` is zero (`ZeroCheckpoints`), so a real call always carries at least one sized claim.
 The tests mirror both rejections in `MockRelay`.
 
-**`skim` is gated on the Relay's KEEPER role.** It taxes whatever balance is idle on the Relay, meaning
-`balanceOf - accountedBalance`. It exists for the case `claimAndSkim` cannot see: rewards that reached the
-Relay through some other route. It is gated because the base is not refreshed between calls, so two calls
-in a row take `1 - 0.95^2 = 9.75%` of the original idle balance at a 5% rate rather than 5%. The Relay's
-keeper is expected to call it once per inflow, before the compounder converts the balance.
-
 ## Known limitations
 
-These follow from the design (permissionless claim path, keeper-gated idle path, no storage, fixed sink) and
-are stated here so nobody relies on a guarantee the contract does not make.
+These follow from the design (one permissionless claim path, no storage, fixed sink) and are stated here so
+nobody relies on a guarantee the contract does not make.
 
-- **Claim and compound in one transaction.** If someone claims a batch and compounds it atomically, the
-  rewards never sit idle on the Relay and neither path can tax them.
-- **Direct claims bypass the fee.** The Relay's `claimRewards` is itself permissionless. Anyone who calls it
-  directly, or front-runs a pending `claimAndSkim`, lands the rewards untaxed and the skimmer's call reverts
-  `NoFee`. Those rewards are then reachable only through `skim`, so collection depends on the Relay's keeper.
-- **The two paths on one inflow compound the fee.** `skim` cannot tell an already-taxed balance from a
-  fresh one. Running `claimAndSkim` and then `skim` on the same inflow takes `FEE + FEE × (1 − FEE)`, the same
-  `1 − 0.95²` the double-skim test documents. The keeper procedure is therefore: `skim` only balances that
-  did not arrive through `claimAndSkim`, and never twice on the same idle balance.
+- **Rewards claimed by someone else are not taxed.** The Relay's `claimRewards` is itself permissionless.
+  Anything claimed directly, by Aero's keeper flow, or by front-running a pending `claimAndSkim`, lands on
+  the Relay untaxed and stays that way: this contract has no path that taxes an idle balance. Fee revenue
+  therefore depends on `claimAndSkim` being the call that claims.
 - **The sink is immutable.** If a token blacklists `FEE_SINK` (USDC/USDT style) or otherwise refuses the
   transfer, every skim of that token reverts `TransferFailed` for the life of the contract and there is no
   admin path to change the sink. Callers must omit that token.
-- **`Skimmed` events on the permissionless path are only as trustworthy as the token.** `tokens` is
-  caller-supplied, so a hostile token that lies about `balanceOf(relay)` can make the skimmer emit a
-  `Skimmed(realRelay, hostileToken, …)` event with arbitrary numbers. No value moves. Indexers should count
-  only tokens the Relay registers as reward tokens.
-- **Absurd balances revert instead of saturating.** `base × FEE_BPS` uses checked arithmetic, so a token
-  reporting a delta above `2²⁵⁶ / FEE_BPS` reverts the whole `claimAndSkim` batch with a panic rather than
-  yielding a zero fee. No real token reaches that range.
+- **`Skimmed` events are only as trustworthy as the token.** `tokens` is caller-supplied, so a hostile token
+  that lies about `balanceOf(relay)` can make the skimmer emit a `Skimmed(realRelay, hostileToken, …)` event
+  with arbitrary numbers. No value moves. Indexers should count only tokens the Relay registers as reward
+  tokens.
+- **Absurd balances revert instead of saturating.** `delta × FEE_BPS` uses checked arithmetic, so a token
+  reporting a delta above `2²⁵⁶ / FEE_BPS` reverts the whole batch with a panic rather than yielding a zero
+  fee. No real token reaches that range.
 
 ## Relay hand-off
 
@@ -82,10 +71,11 @@ afterwards, so the slot is set once.
 ## Upstream pin
 
 Built against https://github.com/dromos-labs/metadex-public at commit
-`b032bb7f55eff31e081196754e0fdbc217f978d2` (`1.0.0-provisional.3`, **undeployed**). The three MIT
-interface files are vendored byte-for-byte under [`test/upstream/`](test/upstream/UPSTREAM.md) and pinned
-by sha256 in CI. `test/Selectors.t.sol` asserts the five selectors this contract depends on against
-literals, against `keccak256` of the signature strings, and against the vendored files.
+`b032bb7f55eff31e081196754e0fdbc217f978d2` (`1.0.0-provisional.3`, **undeployed**; the repo's default
+branch is one version-stamp commit ahead with identical sources). The three MIT interface files are vendored
+byte-for-byte under [`test/upstream/`](test/upstream/UPSTREAM.md) and pinned by sha256 in CI.
+`test/Selectors.t.sol` asserts the two selectors this contract depends on, `pull` and `claimRewards`,
+against literals, against `keccak256` of the signature strings, and against the vendored files.
 
 **Do not deploy before Aero's final Relay code lands.** When it does, refresh the pin as described in
 `test/upstream/UPSTREAM.md` and rerun the selector tests. If they fail, fix `src/interfaces/IRelayEntrypoint.sol`
@@ -106,8 +96,6 @@ Open items, in order. Nothing below is automated; each step is a human decision 
 4. **Deploy and verify** (sections below), then confirm the on-chain address equals the recorded one.
 5. **Hand off.** Pass the address as `converter` in `RelayFactory.createMaxiRelay` (table above). The slot is
    set once at creation, so check the address twice.
-6. **Agree the keeper procedure** with whoever runs the Relay's KEEPER: `skim` only balances that did not
-   arrive through `claimAndSkim`, never twice on the same idle balance, and before compounding.
 
 ## Build and test
 
@@ -116,6 +104,7 @@ git clone --recurse-submodules https://github.com/leo-klima-agents/relay-fee-ski
 forge build --sizes
 forge test
 FOUNDRY_PROFILE=ci forge test        # 10_000 fuzz runs, what CI runs
+forge lint --deny warnings           # what CI runs; needs the pinned forge, see below
 ```
 
 `foundry.toml` pins `solc 0.8.36` to match the Relay's own compiler (move only when Aero's final code does),
@@ -148,7 +137,8 @@ forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --private-key $P
 ```
 
 The script range-checks both inputs, asserts the deployed address equals the prediction, and reads
-`FEE_BPS` and `FEE_SINK` back from the chain.
+`FEE_BPS` and `FEE_SINK` back from the chain. The Base broadcast log, `broadcast/Deploy.s.sol/8453/run-latest.json`,
+is the one broadcast artifact kept under version control; commit it with the deployment.
 
 ## Verify
 
@@ -187,23 +177,24 @@ Committed under `verification/`:
   without them the `deployment` key is absent. `script/check-hashes.sh` compares a fresh build against
   every recorded value and fails if any key is missing.
 
-CI runs `forge fmt --check`, `forge build --sizes`, `forge test` at the high fuzz profile, the sha256 check
-of the vendored upstream files, and a reproducible-build job that builds twice from clean, compares the
-bytecode, and fails on any drift from the recorded hashes.
+CI runs `forge fmt --check`, `forge build --sizes`, `forge lint --deny warnings`, `forge test` at the high
+fuzz profile, the sha256 check of the vendored upstream files, and a reproducible-build job that builds
+twice from clean, compares the bytecode, and fails on any drift from the recorded hashes or the committed
+standard JSON input.
 
 ## Layout
 
 ```
 src/RelayFeeSkim.sol                 the contract
-src/interfaces/IRelayEntrypoint.sol  the five Relay members it calls, plus the two claim structs
+src/interfaces/IRelayEntrypoint.sol  the two Relay members it calls, plus the two claim structs
 src/interfaces/IERC20Minimal.sol     balanceOf, transfer
 script/Deploy.s.sol                  CREATE2 deploy + predict
 script/Hashes.s.sol                  writes verification/bytecode-hashes.json
 script/check-hashes.sh               CI drift check (hashes + compiler settings)
 script/check-standard-input.sh       CI check that the committed standard JSON input is current
-test/RelayFeeSkim.t.sol              behaviour, fuzz, token edge cases, reentrancy
+test/RelayFeeSkim.t.sol              behaviour, fuzz, token edge cases, reentrancy (same-token and cross-token)
 test/Selectors.t.sol                 upstream selector pin
-test/Deploy.t.sol                    deploy script against a locally etched CREATE2 proxy
+test/Deploy.t.sol                    deploy script against forge's pre-deployed CREATE2 deployer
 test/mocks/                          MockRelay (upstream semantics), MockERC20 variants
 test/upstream/                       vendored MIT interfaces + UPSTREAM.md + SHA256SUMS
 verification/                        standard JSON input, bytecode hashes

@@ -8,13 +8,9 @@ import {IRelayEntrypoint} from "./interfaces/IRelayEntrypoint.sol";
 /// @notice Takes a fixed basis-point fee from a Metadex (Aero v3) Relay's rewards and forwards it to a
 ///         fixed sink. Sits in the Relay's `converter` slot so it may call `pull`; never calls
 ///         `notifyReward`, never swaps, holds no storage, has no owner.
-/// @dev Two paths:
-///      - `claimAndSkim` (permissionless): claims rewards on the Relay's behalf and taxes exactly the
-///        balance delta the claim produced.
-///      - `skim` (KEEPER-gated): taxes whatever un-notified balance is idle on the Relay. Gated because
-///        repeated calls compound the fee on the same base (see README).
-///      Every unit this contract moves is bounded by the Relay's own `pull` check, so rewards already
-///      notified to holders (`accountedBalance`) are unreachable.
+/// @dev One permissionless path: `claimAndSkim` claims rewards on the Relay's behalf and taxes exactly the
+///      balance delta the claim produced. Every unit this contract moves is bounded by the Relay's own
+///      `pull` check, so rewards already notified to holders (`accountedBalance`) are unreachable.
 contract RelayFeeSkim {
     /// @notice Basis-point denominator.
     uint256 public constant BPS = 10_000;
@@ -34,7 +30,7 @@ contract RelayFeeSkim {
     /// @notice Emitted once per token per successful skim.
     /// @param relay Relay the fee was pulled from.
     /// @param token Token skimmed.
-    /// @param base Amount the fee was computed on (claim delta or idle balance).
+    /// @param base Claim delta the fee was computed on.
     /// @param fee Amount pulled from the Relay.
     event Skimmed(address indexed relay, address indexed token, uint256 base, uint256 fee);
 
@@ -42,7 +38,6 @@ contract RelayFeeSkim {
     error ZeroAddress();
     error TokensNotSorted();
     error NoFee();
-    error NotKeeper();
     error TransferFailed();
     error Reentrancy();
 
@@ -55,8 +50,9 @@ contract RelayFeeSkim {
         FEE_SINK = feeSink;
     }
 
-    /// @dev Kept inline on purpose: six lines, no library, no internal helpers to audit.
-    // forge-lint: disable-next-item(unwrapped-modifier-logic)
+    /// @dev Kept inline on purpose: six lines, no library, no internal helpers to audit. Used once because
+    ///      the contract has exactly one external function.
+    // forge-lint: disable-next-item(unwrapped-modifier-logic, modifier-used-only-once)
     modifier nonReentrant() {
         if (_locked) revert Reentrancy();
         _locked = true;
@@ -99,24 +95,6 @@ contract RelayFeeSkim {
             if (fees[i] != 0) any = true;
         }
         if (!any) revert NoFee();
-    }
-
-    /// @notice Take the fee on the Relay's idle (un-notified) balance of `token`.
-    /// @param relay Relay to pull from; its KEEPER set gates the caller.
-    /// @param token Token to skim.
-    /// @return fee Fee taken.
-    /// @dev Gated on the Relay's KEEPER role, checked before any other read. Idle is
-    ///      `balanceOf - accountedBalance`, the same bound `pull` enforces.
-    function skim(address relay, address token) external nonReentrant returns (uint256 fee) {
-        IRelayEntrypoint r = IRelayEntrypoint(relay);
-        if (!r.hasAnyRole(msg.sender, r.KEEPER())) revert NotKeeper();
-
-        uint256 balance = IERC20Minimal(token).balanceOf(relay);
-        uint256 accounted = r.accountedBalance(token);
-        uint256 idle = balance > accounted ? balance - accounted : 0;
-
-        fee = _take(relay, token, idle);
-        if (fee == 0) revert NoFee();
     }
 
     /// @dev Compute the fee on `base`, pull it, forward everything held to the sink. Forwards the whole

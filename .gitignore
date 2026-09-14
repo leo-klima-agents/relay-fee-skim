@@ -1,4 +1,11 @@
 out/
 cache/
-broadcast/
 .env
+
+# forge broadcast logs: ignore everything except each script's Base (8453) run-latest.json
+broadcast/*
+!broadcast/*/
+broadcast/*/*
+!broadcast/*/8453/
+broadcast/*/8453/*
+!broadcast/*/8453/run-latest.json

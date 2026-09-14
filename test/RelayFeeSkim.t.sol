@@ -13,7 +13,7 @@ contract RelayFeeSkimTest is Test {
     uint256 internal constant BPS = 10_000;
     address internal constant SINK = address(0xFEE);
 
-    address internal keeper = makeAddr("keeper");
+    // forge-lint: disable-next-line(function-init-state)
     address internal stranger = makeAddr("stranger");
 
     RelayFeeSkim internal skimmer;
@@ -33,7 +33,6 @@ contract RelayFeeSkimTest is Test {
     function setUp() public {
         skimmer = new RelayFeeSkim(FEE_BPS, SINK);
         relay = new MockRelay();
-        relay.grantRoles(keeper, relay.KEEPER());
         relay.grantRoles(address(skimmer), relay.CONVERTER());
         oneFeeClaim.push(IRelayEntrypoint.FeeClaim({votingRewardsManager: makeAddr("vrm"), maxCheckpoints: 1}));
 
@@ -69,6 +68,15 @@ contract RelayFeeSkimTest is Test {
 
     function _fee(uint256 base, uint256 bps) internal pure returns (uint256) {
         return (base * bps) / BPS;
+    }
+
+    /// @dev A hostile token that sorts before a real one, so the hostile token's forward step runs first.
+    function _hostileBeforeReal() internal returns (ReentrantERC20 hostile, MockERC20 real) {
+        hostile = new ReentrantERC20(skimmer, address(relay));
+        for (uint256 salt;; ++salt) {
+            real = new MockERC20{salt: bytes32(salt)}("REAL");
+            if (address(real) > address(hostile)) break;
+        }
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -141,6 +149,17 @@ contract RelayFeeSkimTest is Test {
         assertEq(tokenA.balanceOf(address(relay)), 100_000 + 10_000 - 500);
     }
 
+    function test_claimAndSkim_accountedBalanceUntouched() public {
+        tokenA.mint(address(relay), 100_000);
+        relay.setAccountedBalance(address(tokenA), 100_000); // everything pre-existing is owed to holders
+        relay.setClaimable(address(tokenA), 10_000);
+
+        uint256[] memory fees = _claimAndSkim(stranger, _one(address(tokenA)));
+
+        assertEq(fees[0], 500);
+        assertGe(tokenA.balanceOf(address(relay)), relay.accountedBalance(address(tokenA)));
+    }
+
     function test_claimAndSkim_emitsSkimmed() public {
         relay.setClaimable(address(tokenA), 10_000);
 
@@ -161,6 +180,12 @@ contract RelayFeeSkimTest is Test {
 
     function test_claimAndSkim_nothingClaimableRevertsNoFee() public {
         tokenA.mint(address(relay), 100_000);
+        vm.expectRevert(RelayFeeSkim.NoFee.selector);
+        _claimAndSkim(stranger, _one(address(tokenA)));
+    }
+
+    function test_claimAndSkim_floorsToZeroRevertsNoFee() public {
+        relay.setClaimable(address(tokenA), 19); // 19 * 500 / 10_000 = 0
         vm.expectRevert(RelayFeeSkim.NoFee.selector);
         _claimAndSkim(stranger, _one(address(tokenA)));
     }
@@ -250,6 +275,23 @@ contract RelayFeeSkimTest is Test {
         assertEq(fees[0], 500);
     }
 
+    function test_claimAndSkim_newInflowAfterDrainTaxedFresh() public {
+        relay.setClaimable(address(tokenA), 10_000);
+        _claimAndSkim(stranger, _one(address(tokenA)));
+
+        // Drain the Relay, as a compound would.
+        uint256 remaining = tokenA.balanceOf(address(relay));
+        address elsewhere = makeAddr("elsewhere");
+        vm.prank(address(relay));
+        assertTrue(tokenA.transfer(elsewhere, remaining));
+
+        relay.setClaimable(address(tokenA), 2000);
+        uint256[] memory fees = _claimAndSkim(stranger, _one(address(tokenA)));
+
+        assertEq(fees[0], 100);
+        assertEq(tokenA.balanceOf(SINK), 600);
+    }
+
     function testFuzz_claimAndSkim(uint128 pre, uint128 delta, uint256 bps) public {
         bps = bound(bps, 1, 1000);
         RelayFeeSkim s = new RelayFeeSkim(bps, SINK);
@@ -277,6 +319,10 @@ contract RelayFeeSkimTest is Test {
         assertEq(tokenA.balanceOf(address(s)), 0, "skimmer retained tokens");
     }
 
+    /*//////////////////////////////////////////////////////////////
+                              REENTRANCY
+    //////////////////////////////////////////////////////////////*/
+
     function test_claimAndSkim_reentrantTokenReverts() public {
         ReentrantERC20 rt = new ReentrantERC20(skimmer, address(relay));
         relay.setClaimable(address(rt), 10_000);
@@ -301,159 +347,44 @@ contract RelayFeeSkimTest is Test {
         assertEq(rt.balanceOf(address(skimmer)), 0);
     }
 
-    function test_skim_reentrantToken_lockIsTheCause() public {
-        ReentrantERC20 rt = new ReentrantERC20(skimmer, address(relay));
-        rt.setMode(ReentrantERC20.Mode.Skim);
-        rt.setRecord(true);
-        relay.grantRoles(address(rt), relay.KEEPER()); // even a keeper cannot reenter
-        rt.mint(address(relay), 10_000);
+    /// @dev Cross-token attempt: the hostile token sorts first, so during its forward step it configures a
+    ///      second claim source for the real token and reenters `claimAndSkim` for that token alone. Without
+    ///      the lock the inner call would tax the real token's inflated balance and the outer loop would tax
+    ///      it again from its stale `before`. With the lock the inner call reverts and the whole outer call
+    ///      fails as a transfer failure.
+    function test_claimAndSkim_crossTokenReentrancyReverts() public {
+        (ReentrantERC20 hostile, MockERC20 real) = _hostileBeforeReal();
+        hostile.setReentryTarget(address(real), 10_000);
+        relay.setClaimable(address(hostile), 10_000);
+        relay.setClaimable(address(real), 10_000);
 
-        vm.prank(keeper);
-        uint256 fee = skimmer.skim(address(relay), address(rt));
+        vm.expectRevert(RelayFeeSkim.TransferFailed.selector);
+        _claimAndSkim(stranger, _two(address(hostile), address(real)));
 
-        assertTrue(rt.reentered());
-        assertEq(rt.lastRevert(), abi.encodeWithSelector(RelayFeeSkim.Reentrancy.selector));
-        assertEq(fee, 500);
+        assertEq(real.balanceOf(SINK), 0);
     }
 
-    /*//////////////////////////////////////////////////////////////
-                                 skim
-    //////////////////////////////////////////////////////////////*/
+    function test_claimAndSkim_crossTokenReentrancy_lockIsTheCause_realTaxedOnce() public {
+        (ReentrantERC20 hostile, MockERC20 real) = _hostileBeforeReal();
+        hostile.setRecord(true);
+        hostile.setReentryTarget(address(real), 10_000);
+        relay.setClaimable(address(hostile), 10_000);
+        relay.setClaimable(address(real), 10_000);
 
-    function test_skim_nonKeeperRevertsBeforeAnyRead() public {
-        tokenA.mint(address(relay), 10_000);
-        // A codeless token: any balance read would revert with empty data, not NotKeeper.
-        address codeless = address(0xC0DE1E55);
-        assertEq(codeless.code.length, 0);
+        uint256[] memory fees = _claimAndSkim(stranger, _two(address(hostile), address(real)));
 
-        vm.expectRevert(RelayFeeSkim.NotKeeper.selector);
-        vm.prank(stranger);
-        skimmer.skim(address(relay), codeless);
-    }
-
-    function test_skim_revokedKeeperReverts() public {
-        tokenA.mint(address(relay), 10_000);
-        relay.revokeRoles(keeper, relay.KEEPER());
-
-        vm.expectRevert(RelayFeeSkim.NotKeeper.selector);
-        vm.prank(keeper);
-        skimmer.skim(address(relay), address(tokenA));
-    }
-
-    function test_skim_otherRolesWithoutKeeperRevert() public {
-        tokenA.mint(address(relay), 10_000);
-        address other = makeAddr("other");
-        relay.grantRoles(other, relay.VOTER_ROLE() | relay.COMPOUNDER() | relay.CONVERTER());
-
-        vm.expectRevert(RelayFeeSkim.NotKeeper.selector);
-        vm.prank(other);
-        skimmer.skim(address(relay), address(tokenA));
-    }
-
-    function test_skim_feeOnIdle_subtractsAccounted() public {
-        tokenA.mint(address(relay), 10_000);
-        relay.setAccountedBalance(address(tokenA), 4000); // owed to holders, untouchable
-
-        vm.expectEmit(address(skimmer));
-        emit RelayFeeSkim.Skimmed(address(relay), address(tokenA), 6000, 300);
-        vm.prank(keeper);
-        uint256 fee = skimmer.skim(address(relay), address(tokenA));
-
-        assertEq(fee, 300);
-        assertEq(tokenA.balanceOf(SINK), 300);
-        assertEq(tokenA.balanceOf(address(relay)), 9700);
-        assertGe(tokenA.balanceOf(address(relay)), relay.accountedBalance(address(tokenA)));
-    }
-
-    function test_skim_accountedAboveBalance_noFee() public {
-        tokenA.mint(address(relay), 10_000);
-        relay.setAccountedBalance(address(tokenA), 10_001);
-
-        vm.expectRevert(RelayFeeSkim.NoFee.selector);
-        vm.prank(keeper);
-        skimmer.skim(address(relay), address(tokenA));
-    }
-
-    function test_skim_floorsToZero_noFee() public {
-        tokenA.mint(address(relay), 19); // 19 * 500 / 10_000 = 0
-
-        vm.expectRevert(RelayFeeSkim.NoFee.selector);
-        vm.prank(keeper);
-        skimmer.skim(address(relay), address(tokenA));
-    }
-
-    /// @dev Two consecutive skims take 1 - 0.95^2 = 9.75% of the original idle balance, not 5%. This
-    ///      compounding on an un-refreshed base is why `skim` is KEEPER-gated and `claimAndSkim` is not.
-    function test_skim_twiceCompounds() public {
-        tokenA.mint(address(relay), 10_000);
-
-        vm.prank(keeper);
-        uint256 first = skimmer.skim(address(relay), address(tokenA));
-        vm.prank(keeper);
-        uint256 second = skimmer.skim(address(relay), address(tokenA));
-
-        assertEq(first, 500);
-        assertEq(second, 475);
-        assertEq(tokenA.balanceOf(SINK), 975); // 10_000 * (1 - 0.95^2)
-        assertEq(tokenA.balanceOf(address(relay)), 9025);
-    }
-
-    function test_skim_newInflowAfterDrainTaxedFresh() public {
-        tokenA.mint(address(relay), 10_000);
-        vm.prank(keeper);
-        skimmer.skim(address(relay), address(tokenA));
-
-        // Drain the Relay, as a compound/convert would.
-        uint256 remaining = tokenA.balanceOf(address(relay));
-        address elsewhere = makeAddr("elsewhere");
-        vm.prank(address(relay));
-        assertTrue(tokenA.transfer(elsewhere, remaining));
-        vm.expectRevert(RelayFeeSkim.NoFee.selector);
-        vm.prank(keeper);
-        skimmer.skim(address(relay), address(tokenA));
-
-        tokenA.mint(address(relay), 2000);
-        vm.prank(keeper);
-        uint256 fee = skimmer.skim(address(relay), address(tokenA));
-
-        assertEq(fee, 100);
-        assertEq(tokenA.balanceOf(SINK), 600);
-    }
-
-    function test_skim_revertsWithoutPullRole() public {
-        tokenA.mint(address(relay), 10_000);
-        relay.revokeRoles(address(skimmer), relay.CONVERTER());
-
-        vm.expectRevert(MockRelay.NotAuthorized.selector);
-        vm.prank(keeper);
-        skimmer.skim(address(relay), address(tokenA));
-    }
-
-    function testFuzz_skim(uint128 balance, uint128 accounted, uint256 bps) public {
-        bps = bound(bps, 1, 1000);
-        RelayFeeSkim s = new RelayFeeSkim(bps, SINK);
-        relay.grantRoles(address(s), relay.CONVERTER());
-
-        tokenA.mint(address(relay), balance);
-        relay.setAccountedBalance(address(tokenA), accounted);
-
-        uint256 idle = balance > accounted ? balance - accounted : 0;
-        uint256 expected = _fee(idle, bps);
-        if (expected == 0) {
-            vm.expectRevert(RelayFeeSkim.NoFee.selector);
-            vm.prank(keeper);
-            s.skim(address(relay), address(tokenA));
-            return;
-        }
-
-        vm.prank(keeper);
-        uint256 fee = s.skim(address(relay), address(tokenA));
-
-        assertEq(fee, expected);
-        assertLe(fee * BPS, idle * bps);
-        assertGe(tokenA.balanceOf(address(relay)), accounted, "accounted balance touched");
-        assertEq(tokenA.balanceOf(SINK), expected);
-        assertEq(tokenA.balanceOf(address(s)), 0);
+        assertTrue(hostile.reentered());
+        assertEq(hostile.lastRevert(), abi.encodeWithSelector(RelayFeeSkim.Reentrancy.selector));
+        // The real token was taxed exactly once, on the delta the outer claim produced.
+        assertEq(fees[1], 500);
+        assertEq(real.balanceOf(SINK), 500);
+        assertEq(real.balanceOf(address(relay)), 9500);
+        // The second claim source the hostile token set up was never claimed by the reentrant call...
+        assertEq(relay.claimable(address(real)), 10_000);
+        // ...and an honest follow-up claim taxes it once, for a clean 5% of the 20_000 total inflow.
+        uint256[] memory later = _claimAndSkim(stranger, _one(address(real)));
+        assertEq(later[0], 500);
+        assertEq(real.balanceOf(SINK), 1000);
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -462,12 +393,11 @@ contract RelayFeeSkimTest is Test {
 
     function test_token_noReturnData_works() public {
         NoReturnERC20 usdt = new NoReturnERC20();
-        usdt.mint(address(relay), 10_000);
+        relay.setClaimable(address(usdt), 10_000);
 
-        vm.prank(keeper);
-        uint256 fee = skimmer.skim(address(relay), address(usdt));
+        uint256[] memory fees = _claimAndSkim(stranger, _one(address(usdt)));
 
-        assertEq(fee, 500);
+        assertEq(fees[0], 500);
         assertEq(usdt.balanceOf(SINK), 500);
         assertEq(usdt.balanceOf(address(relay)), 9500);
         assertEq(usdt.balanceOf(address(skimmer)), 0);
@@ -477,33 +407,24 @@ contract RelayFeeSkimTest is Test {
         // The stub's pull is a no-op, so the only transfer that runs is the skimmer's own forward.
         NoopPullRelay stub = new NoopPullRelay();
         ReturnsFalseERC20 bad = new ReturnsFalseERC20();
-        bad.mint(address(stub), 10_000);
+        stub.setClaimable(address(bad), 10_000);
         bad.mint(address(skimmer), 500);
+        IRelayEntrypoint.FeeClaim[] memory claims = new IRelayEntrypoint.FeeClaim[](1);
+        claims[0] = IRelayEntrypoint.FeeClaim({votingRewardsManager: address(bad), maxCheckpoints: 1});
 
         vm.expectRevert(RelayFeeSkim.TransferFailed.selector);
-        vm.prank(keeper);
-        skimmer.skim(address(stub), address(bad));
+        vm.prank(stranger);
+        skimmer.claimAndSkim(address(stub), claims, noIncentiveClaims, _one(address(bad)));
     }
 
     function test_token_strayBalanceForwarded() public {
-        tokenA.mint(address(relay), 10_000);
+        relay.setClaimable(address(tokenA), 10_000);
         tokenA.mint(address(skimmer), 123); // stray
 
-        vm.prank(keeper);
-        uint256 fee = skimmer.skim(address(relay), address(tokenA));
+        uint256[] memory fees = _claimAndSkim(stranger, _one(address(tokenA)));
 
-        assertEq(fee, 500);
+        assertEq(fees[0], 500);
         assertEq(tokenA.balanceOf(SINK), 623);
-        assertEq(tokenA.balanceOf(address(skimmer)), 0);
-    }
-
-    function test_token_strayBalanceForwarded_claimPath() public {
-        relay.setClaimable(address(tokenA), 10_000);
-        tokenA.mint(address(skimmer), 7);
-
-        _claimAndSkim(stranger, _one(address(tokenA)));
-
-        assertEq(tokenA.balanceOf(SINK), 507);
         assertEq(tokenA.balanceOf(address(skimmer)), 0);
     }
 }

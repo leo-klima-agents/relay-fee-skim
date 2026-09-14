@@ -25,6 +25,9 @@ jobs:
         run: forge fmt --check
       - name: forge build --sizes
         run: forge build --sizes
+      - name: forge lint
+        # Exercises the [lint] block in foundry.toml; any warning not excluded there fails the job.
+        run: forge lint --deny warnings
       - name: forge test (ci fuzz profile)
         run: forge test -vvv
 
