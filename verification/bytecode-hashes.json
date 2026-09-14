@@ -9,8 +9,8 @@
   },
   "contract": "src/RelayFeeSkim.sol:RelayFeeSkim",
   "create2Deployer": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
-  "creationCodeKeccak": "0x30b9e91a4755af739007ebcceb046d7041342ad068e3984ccd1caa43c72daeb7",
-  "runtimeTemplateKeccak": "0x2cb4f42adf1b16651c4116291b153bf1522b2fe97c400eb85cfb21825bd42009",
+  "creationCodeKeccak": "0xc9b9962ed76cca787b583bbf34fbc864c592b5c5fe1094704ea3c1b2f42a1dea",
+  "runtimeTemplateKeccak": "0xd70504d7d44ec8aeb6439f5b2618d939b20772b63405eb81d3718ba8a7675883",
   "salt": "0x48f232915e6edaa4305e116efb746c5fbf2444bd05cf548db0ae1ccdcf693f33",
   "saltPreimage": "leo-klima-agents/relay-fee-skim/RelayFeeSkim/v1"
 }

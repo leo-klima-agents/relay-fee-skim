@@ -23,9 +23,9 @@ contract Deploy is Script {
     string public constant SALT_PREIMAGE = "leo-klima-agents/relay-fee-skim/RelayFeeSkim/v1";
     bytes32 public constant SALT = keccak256(bytes(SALT_PREIMAGE));
 
-    /// @notice Constructor-args-appended init code for the given parameters.
+    /// @notice Init code: creation code with the constructor args appended.
     function initCode(uint256 feeBps, address feeSink) public pure returns (bytes memory) {
-        // Raw concatenation is exactly what CREATE2 init code is; no hashing of ambiguous fields happens here.
+        // Plain concatenation; nothing here is hashed for uniqueness.
         // forge-lint: disable-next-line(encode-packed-collision)
         return abi.encodePacked(type(RelayFeeSkim).creationCode, abi.encode(feeBps, feeSink));
     }

@@ -52,11 +52,11 @@ contract ReturnsFalseERC20 is MockLedger {
     }
 }
 
-/// @notice Reenters `claimAndSkim` from `transfer` whenever the skimmer itself is the sender, i.e. during
-///         the forward-to-sink step. By default it reenters for itself; `setReentryTarget` makes it first
-///         configure a fresh claim source for another token on the mock Relay and then reenter for that
-///         token, the cross-token double-tax attempt. With `record` off the reentrant call's revert
-///         bubbles; with it on, the revert data is captured in `lastRevert` and the transfer completes.
+/// @notice Reenters `claimAndSkim` from `transfer` when the skimmer is the sender, i.e. during the
+///         forward-to-sink step. Reenters for itself unless `setReentryTarget` names another token, in which
+///         case it first sets up a fresh claim source for that token on the mock Relay (the cross-token
+///         double-tax attempt). With `record` off the inner revert bubbles; with it on, it is stored in
+///         `lastRevert` and the transfer completes.
 contract ReentrantERC20 is MockERC20 {
     RelayFeeSkim public immutable SKIMMER;
     address public immutable RELAY;

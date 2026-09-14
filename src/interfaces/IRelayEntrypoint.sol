@@ -2,11 +2,11 @@
 pragma solidity 0.8.36;
 
 /// @title  IRelayEntrypoint
-/// @notice The slice of a Metadex Relay that RelayFeeSkim drives. Re-declared here so `src/` has no
-///         dependency on the upstream tree; every member below is byte-for-byte selector-compatible
-///         with dromos-labs/metadex-public at the commit pinned in test/upstream/UPSTREAM.md.
-/// @dev Structs mirror `ILeafVoter.FeeClaim` / `ILeafVoter.IncentiveClaim`; `claimRewards` mirrors
-///      `IRelay.claimRewards`; `pull` mirrors `IRelayEntrypoint.pull`. test/Selectors.t.sol pins both.
+/// @notice The two Relay members RelayFeeSkim calls, and the structs they take, re-declared so `src/` has
+///         no upstream dependency. Selector-compatible with dromos-labs/metadex-public at the commit
+///         pinned in test/upstream/UPSTREAM.md; test/Selectors.t.sol proves it.
+/// @dev Upstream sources: `IRelayEntrypoint.pull`, `IRelay.claimRewards`, `ILeafVoter.FeeClaim` and
+///      `ILeafVoter.IncentiveClaim`.
 interface IRelayEntrypoint {
     /// @notice Fee claim request forwarded through the Voter.
     struct FeeClaim {

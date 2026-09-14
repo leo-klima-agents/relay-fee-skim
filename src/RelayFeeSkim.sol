@@ -24,7 +24,7 @@ contract RelayFeeSkim {
     /// @notice Recipient of every skimmed unit, fixed at deploy.
     address public immutable FEE_SINK;
 
-    /// @dev Reentrancy lock. Transient, so it costs no persistent storage and resets each transaction.
+    /// @dev Reentrancy lock; transient, so it resets every transaction.
     bool transient _locked;
 
     /// @notice Emitted once per token per successful skim.
@@ -87,8 +87,7 @@ contract RelayFeeSkim {
         bool any;
         for (uint256 i; i < n; ++i) {
             uint256 balance = IERC20Minimal(tokens[i]).balanceOf(relay);
-            // Saturating: a token whose balance somehow fell during the claim yields no fee rather
-            // than reverting the whole batch.
+            // Saturating: a token whose balance fell during the claim yields no fee instead of reverting the batch.
             uint256 delta = balance > before[i] ? balance - before[i] : 0;
             fees[i] = _take(relay, tokens[i], delta);
             if (fees[i] != 0) any = true;
@@ -96,8 +95,8 @@ contract RelayFeeSkim {
         if (!any) revert NoFee();
     }
 
-    /// @dev Compute the fee on `base`, pull it, forward everything held to the sink. Forwards the whole
-    ///      balance rather than `fee` so stray tokens and fee-on-transfer shortfalls never strand here.
+    /// @dev Fee on `base`: pull it, then forward everything held to the sink. The whole balance goes, not
+    ///      just `fee`, so stray tokens and fee-on-transfer shortfalls never strand here.
     function _take(address relay, address token, uint256 base) internal returns (uint256 fee) {
         fee = (base * FEE_BPS) / BPS;
         if (fee == 0) return 0;
