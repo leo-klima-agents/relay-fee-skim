@@ -50,8 +50,7 @@ contract RelayFeeSkim {
         FEE_SINK = feeSink;
     }
 
-    /// @dev Kept inline on purpose: six lines, no library, no internal helpers to audit. Used once because
-    ///      the contract has exactly one external function.
+    /// @dev Inline on purpose: six lines, no library. Guards the contract's single external function.
     // forge-lint: disable-next-item(unwrapped-modifier-logic, modifier-used-only-once)
     modifier nonReentrant() {
         if (_locked) revert Reentrancy();

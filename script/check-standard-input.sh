@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Check that verification/RelayFeeSkim.standard-input.json still describes the current sources and the
-# bytecode-relevant compiler settings. Only those parts are compared, so the check does not depend on
-# which forge release shaped the rest of the file (e.g. 1.8.x adds `experimental` and `viaSSACFG`).
+# Check that verification/RelayFeeSkim.standard-input.json describes the current sources and the
+# bytecode-relevant compiler settings. Only those parts are compared, so the check is independent of the
+# forge release that shaped the rest of the file.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

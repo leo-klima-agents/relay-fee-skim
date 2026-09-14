@@ -7,7 +7,7 @@ on:
 
 env:
   FOUNDRY_PROFILE: ci
-  # Pinned exact release, never "stable": bytecode hashes in verification/ are tied to it.
+  # Pinned exact release, never "stable": the [lint] ids and the committed standard JSON input assume it.
   FOUNDRY_VERSION: v1.8.1
 
 jobs:

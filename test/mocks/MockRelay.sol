@@ -105,7 +105,7 @@ contract MockRelay {
 }
 
 /// @notice Relay stub whose `pull` is a no-op, so the skimmer's own forward-to-sink transfer is the only
-///         transfer that runs. `claimRewards` still mints the configured amount so there is a delta to tax.
+///         transfer that runs. `claimRewards` mints the configured amount so there is a delta to tax.
 // forge-lint: disable-next-item(locked-ether) -- payable to match the interface; never receives value
 contract NoopPullRelay {
     mapping(address token => uint256 amount) public claimable;

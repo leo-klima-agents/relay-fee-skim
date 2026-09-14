@@ -41,8 +41,7 @@ number_underscore = "thousands"
 ignore = ["./test/upstream/*.sol", "lib/**"]
 
 [lint]
-# forge 1.8.x lint ids excluded on purpose; CI runs `forge lint --deny warnings` against this list, and every
-# id below still fires on the current sources (re-check with `exclude_lints = []` when pruning). The first
+# forge 1.8.x lint ids excluded on purpose; CI runs `forge lint --deny warnings` against this list. The first
 # group flags RelayFeeSkim's design (see README "Guarantees"); the second is style-only noise from tests,
 # mocks and scripts. Anything else that fires is disabled inline at the offending line with a reason.
 exclude_lints = [
