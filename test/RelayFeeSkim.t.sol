@@ -347,11 +347,10 @@ contract RelayFeeSkimTest is Test {
         assertEq(rt.balanceOf(address(skimmer)), 0);
     }
 
-    /// @dev Cross-token attempt: the hostile token sorts first, so during its forward step it configures a
-    ///      second claim source for the real token and reenters `claimAndSkim` for that token alone. Without
-    ///      the lock the inner call would tax the real token's inflated balance and the outer loop would tax
-    ///      it again from its stale `before`. With the lock the inner call reverts and the whole outer call
-    ///      fails as a transfer failure.
+    /// @dev Cross-token attempt: the hostile token sorts first; during its forward step it sets up a second
+    ///      claim source for the real token and reenters for that token alone. Without the lock, the inner
+    ///      call would tax the real token and the outer loop would tax it again from its stale `before`.
+    ///      With the lock, the inner call reverts and the outer call fails as a transfer failure.
     function test_claimAndSkim_crossTokenReentrancyReverts() public {
         (ReentrantERC20 hostile, MockERC20 real) = _hostileBeforeReal();
         hostile.setReentryTarget(address(real), 10_000);
