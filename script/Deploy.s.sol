@@ -15,8 +15,8 @@ contract Deploy is Script {
     /// @notice Arachnid's deterministic deployment proxy, forge-std's `CREATE2_FACTORY`, exposed as a getter.
     address public constant CREATE2_DEPLOYER = CREATE2_FACTORY;
 
-    /// @notice Mirror of RelayFeeSkim.MAX_FEE_BPS, checked here for a readable error before any broadcast.
-    ///         Solidity cannot read a constant through a contract type, so test/Deploy.t.sol pins the two equal.
+    /// @notice Mirror of RelayFeeSkim.MAX_FEE_BPS for a readable error before any broadcast; test/Deploy.t.sol
+    ///         pins the two equal.
     uint256 public constant MAX_FEE_BPS = 1000;
 
     /// @notice Salt preimage. Bump the version suffix to redeploy (e.g. after an upstream pin change).

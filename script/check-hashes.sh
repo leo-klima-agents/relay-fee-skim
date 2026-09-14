@@ -24,7 +24,7 @@ status=0
 # expect <jq path into RECORD> <built value> <label>
 expect() {
   local recorded
-  # `// empty` would drop a legitimate `false`, so test for null explicitly.
+  # null-safe read that keeps a legitimate `false`
   recorded=$(jq -r "$1 | if . == null then \"\" else tostring end" "$RECORD")
   if [ -z "$recorded" ]; then
     echo "::error::$RECORD is missing $1" >&2; status=1

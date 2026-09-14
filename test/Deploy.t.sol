@@ -70,7 +70,7 @@ contract DeployTest is Test {
     function test_deploy_rejectsBadInputs() public {
         vm.expectRevert(bytes("FEE_BPS out of range: 1..MAX_FEE_BPS"));
         d.deploy(0, SINK);
-        uint256 aboveCap = d.MAX_FEE_BPS() + 1; // read first: an external call would consume expectRevert
+        uint256 aboveCap = d.MAX_FEE_BPS() + 1;
         vm.expectRevert(bytes("FEE_BPS out of range: 1..MAX_FEE_BPS"));
         d.deploy(aboveCap, SINK);
         vm.expectRevert(bytes("FEE_SINK must not be zero"));

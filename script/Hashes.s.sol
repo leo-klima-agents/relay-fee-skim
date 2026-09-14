@@ -8,11 +8,10 @@ import {Deploy} from "./Deploy.s.sol";
 
 /// @notice Writes verification/bytecode-hashes.json from the current build.
 /// @dev Always records the argument-independent hashes (creation code, runtime template with immutable
-///      slots zeroed) and the compiler settings read back from the build artifact's metadata, so the
-///      record can never describe a different compiler than the one that produced the hashes. With
-///      FEE_BPS and FEE_SINK in the environment it also records the deployment-specific values:
-///      constructor args, init-code hash, CREATE2 address and the keccak of the runtime bytecode with
-///      immutables filled in. Without them the `deployment` key is omitted.
+///      slots zeroed) and the compiler settings read from the build artifact's metadata. With FEE_BPS and
+///      FEE_SINK in the environment it also records the deployment-specific values: constructor args,
+///      init-code hash, CREATE2 address and the keccak of the runtime bytecode with immutables filled in.
+///      Without them the `deployment` key is omitted.
 ///        forge script script/Hashes.s.sol
 ///        FEE_BPS=500 FEE_SINK=0x... forge script script/Hashes.s.sol
 contract Hashes is Script {

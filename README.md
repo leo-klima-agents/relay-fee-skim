@@ -71,8 +71,7 @@ afterwards, so the slot is set once.
 ## Upstream pin
 
 Built against https://github.com/dromos-labs/metadex-public at commit
-`b032bb7f55eff31e081196754e0fdbc217f978d2` (`1.0.0-provisional.3`, **undeployed**; the repo's default
-branch is one version-stamp commit ahead with identical sources). The three MIT interface files are vendored
+`b032bb7f55eff31e081196754e0fdbc217f978d2` (`1.0.0-provisional.3`, **undeployed**). The three MIT interface files are vendored
 byte-for-byte under [`test/upstream/`](test/upstream/UPSTREAM.md) and pinned by sha256 in CI.
 `test/Selectors.t.sol` asserts the two selectors this contract depends on, `pull` and `claimRewards`,
 against literals, against `keccak256` of the signature strings, and against the vendored files.
@@ -168,8 +167,7 @@ Committed under `verification/`:
   with the pinned forge:
   `forge verify-contract --show-standard-json-input 0x0000000000000000000000000000000000000001 src/RelayFeeSkim.sol:RelayFeeSkim > verification/RelayFeeSkim.standard-input.json`.
   `script/check-standard-input.sh` compares only the sources and the bytecode-relevant settings, so it
-  passes on any forge release; the surrounding key set (for example `experimental`, `viaSSACFG`) is
-  whatever forge emitted.
+  passes on any forge release; the rest of the file is whatever forge emitted.
 - `bytecode-hashes.json`: salt, CREATE2 deployer, keccak of the creation code and of the runtime template
   (immutable slots zeroed), and the compiler settings read back from the build artifact's metadata. With
   `FEE_BPS` and `FEE_SINK` set, `forge script script/Hashes.s.sol` also records the constructor args,
