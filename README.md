@@ -76,8 +76,8 @@ forge test
 FOUNDRY_PROFILE=ci forge test        # 10_000 fuzz runs, what CI runs
 ```
 
-`foundry.toml` pins `solc 0.8.36`, `evm_version = "prague"`, optimizer on at 1,000,000 runs,
-`bytecode_hash = "ipfs"`, `cbor_metadata = true`. `forge-std` is a submodule used by tests and scripts only.
+`foundry.toml` pins `solc 0.8.36` to match the Relay's own compiler (move only when Aero's final code does), `evm_version = "prague"`, optimizer on at 1,000,000 runs,
+`bytecode_hash = "ipfs"`, `cbor_metadata = true`. `forge-std` is a submodule used by tests and scripts only. CI pins Foundry `v1.8.1` exactly (never `stable`); the hashes under `verification/` were produced with it.
 
 ## Deploy
 
