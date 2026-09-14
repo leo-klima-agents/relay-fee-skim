@@ -7,17 +7,18 @@ on:
 
 env:
   FOUNDRY_PROFILE: ci
-  FOUNDRY_VERSION: v1.5.1
+  # Pinned exact release, never "stable": bytecode hashes in verification/ are tied to it.
+  FOUNDRY_VERSION: v1.8.1
 
 jobs:
   check:
     name: fmt, build, test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
           version: ${{ env.FOUNDRY_VERSION }}
       - name: forge fmt --check
@@ -31,7 +32,7 @@ jobs:
     name: vendored upstream sha256
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: sha256sum -c
         working-directory: test/upstream
         run: sha256sum -c SHA256SUMS
@@ -46,10 +47,10 @@ jobs:
     name: reproducible build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
-      - uses: foundry-rs/foundry-toolchain@v1
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
           version: ${{ env.FOUNDRY_VERSION }}
       - name: build #1 from clean

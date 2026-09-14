@@ -6,6 +6,7 @@ script = "script"
 libs = ["lib"]
 remappings = ["forge-std/=lib/forge-std/src/"]
 
+# Matches the Relay's own compiler (metadex-public pins 0.8.36); move only when Aero's final code does.
 solc_version = "0.8.36"
 evm_version = "prague"
 optimizer = true
@@ -40,3 +41,21 @@ int_types = "long"
 quote_style = "double"
 number_underscore = "thousands"
 ignore = ["./test/upstream/*.sol", "lib/**"]
+
+[lint]
+# forge 1.8.x lint ids excluded on purpose. The first group flags RelayFeeSkim's design (see README
+# "Guarantees"); the second is style-only noise from tests and mocks. Nothing here changes bytecode.
+exclude_lints = [
+  "reentrancy-no-eth",       # the six-line transient lock is the guard the linter asks for
+  "reentrancy-events",       # Skimmed is emitted after pull by design: it reports the completed move
+  "calls-loop",              # claimAndSkim iterates caller-supplied tokens; each needs its own calls
+  "require-revert-in-loop",  # TokensNotSorted must abort inside the sort check
+  "low-level-calls",         # _safeTransfer is a raw `transfer` call by specification
+  "uninitialized-local",     # `bool any` and `new uint256[](n)` rely on zero defaults
+  "literal-instead-of-constant",
+  "multi-contract-file",
+  "missing-inheritance",
+  "pragma-inconsistent",     # vendored upstream IRelayEntrypoint.sol is ^0.8.0
+  "unsafe-cheatcode",
+  "unused-return",
+]
