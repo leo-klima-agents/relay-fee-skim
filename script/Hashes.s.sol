@@ -8,26 +8,35 @@ import {Deploy} from "./Deploy.s.sol";
 
 /// @notice Writes verification/bytecode-hashes.json from the current build.
 /// @dev Always records the argument-independent hashes (creation code, runtime template with immutable
-///      slots zeroed). With FEE_BPS and FEE_SINK in the environment it also records the deployment-
-///      specific values: constructor args, init-code hash, CREATE2 address and the keccak of the runtime
-///      bytecode with immutables filled in.
+///      slots zeroed) and the compiler settings read back from the build artifact's metadata, so the
+///      record can never describe a different compiler than the one that produced the hashes. With
+///      FEE_BPS and FEE_SINK in the environment it also records the deployment-specific values:
+///      constructor args, init-code hash, CREATE2 address and the keccak of the runtime bytecode with
+///      immutables filled in. Without them the `deployment` key is omitted.
 ///        forge script script/Hashes.s.sol
 ///        FEE_BPS=500 FEE_SINK=0x... forge script script/Hashes.s.sol
 contract Hashes is Script {
+    string internal constant ARTIFACT = "out/RelayFeeSkim.sol/RelayFeeSkim.json";
     string internal constant OUT = "verification/bytecode-hashes.json";
 
     function run() external {
         Deploy d = new Deploy();
         bytes memory creation = type(RelayFeeSkim).creationCode;
         bytes memory runtimeTemplate = vm.getDeployedCode("RelayFeeSkim.sol:RelayFeeSkim");
+        string memory artifact = vm.readFile(ARTIFACT);
 
         string memory compiler = "compiler";
-        vm.serializeString(compiler, "solc", "0.8.36");
-        vm.serializeString(compiler, "evmVersion", "prague");
-        vm.serializeBool(compiler, "optimizer", true);
-        vm.serializeUint(compiler, "optimizerRuns", 1_000_000);
-        vm.serializeBool(compiler, "viaIr", false);
-        string memory compilerJson = vm.serializeString(compiler, "bytecodeHash", "ipfs");
+        vm.serializeString(compiler, "solc", vm.parseJsonString(artifact, ".metadata.compiler.version"));
+        vm.serializeString(compiler, "evmVersion", vm.parseJsonString(artifact, ".metadata.settings.evmVersion"));
+        vm.serializeBool(compiler, "optimizer", vm.parseJsonBool(artifact, ".metadata.settings.optimizer.enabled"));
+        vm.serializeUint(compiler, "optimizerRuns", vm.parseJsonUint(artifact, ".metadata.settings.optimizer.runs"));
+        // solc omits `viaIR` from metadata unless it is enabled.
+        bool viaIr = vm.keyExistsJson(artifact, ".metadata.settings.viaIR")
+            && vm.parseJsonBool(artifact, ".metadata.settings.viaIR");
+        vm.serializeBool(compiler, "viaIr", viaIr);
+        string memory compilerJson = vm.serializeString(
+            compiler, "bytecodeHash", vm.parseJsonString(artifact, ".metadata.settings.metadata.bytecodeHash")
+        );
 
         string memory root = "hashes";
         vm.serializeString(root, "contract", "src/RelayFeeSkim.sol:RelayFeeSkim");
@@ -36,25 +45,21 @@ contract Hashes is Script {
         vm.serializeString(root, "saltPreimage", d.SALT_PREIMAGE());
         vm.serializeBytes32(root, "salt", d.SALT());
         vm.serializeBytes32(root, "creationCodeKeccak", keccak256(creation));
-        vm.serializeBytes32(root, "runtimeTemplateKeccak", keccak256(runtimeTemplate));
+        string memory json = vm.serializeBytes32(root, "runtimeTemplateKeccak", keccak256(runtimeTemplate));
 
         uint256 feeBps = vm.envOr("FEE_BPS", uint256(0));
         address feeSink = vm.envOr("FEE_SINK", address(0));
-        string memory json;
         if (feeBps != 0 && feeSink != address(0)) {
-            bytes memory args = abi.encode(feeBps, feeSink);
             RelayFeeSkim local = new RelayFeeSkim(feeBps, feeSink);
 
             string memory dep = "deployment";
             vm.serializeUint(dep, "feeBps", feeBps);
             vm.serializeAddress(dep, "feeSink", feeSink);
-            vm.serializeBytes(dep, "constructorArgs", args);
+            vm.serializeBytes(dep, "constructorArgs", abi.encode(feeBps, feeSink));
             vm.serializeBytes32(dep, "initCodeHash", keccak256(d.initCode(feeBps, feeSink)));
             vm.serializeAddress(dep, "address", d.predict(feeBps, feeSink));
             string memory depJson = vm.serializeBytes32(dep, "runtimeKeccak", keccak256(address(local).code));
             json = vm.serializeString(root, "deployment", depJson);
-        } else {
-            json = vm.serializeString(root, "deployment", "unset: rerun with FEE_BPS and FEE_SINK");
         }
         vm.writeJson(json, OUT);
     }

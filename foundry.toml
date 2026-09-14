@@ -28,10 +28,8 @@ fs_permissions = [
 [profile.default.fuzz]
 runs = 256
 
-[profile.ci]
 [profile.ci.fuzz]
 runs = 10_000
-max_test_rejects = 1_000_000
 
 [fmt]
 line_length = 120

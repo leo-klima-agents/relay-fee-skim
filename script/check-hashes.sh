@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Compare the current build's RelayFeeSkim runtime template (immutable slots zeroed) against the hash
-# recorded in verification/bytecode-hashes.json. Exits 0 when they match or when no hash is recorded yet.
+# Compare the current build's RelayFeeSkim artifact against verification/bytecode-hashes.json:
+# the runtime template (immutable slots zeroed), the creation code, and the recorded compiler settings.
+# Exits 0 when everything matches or when no record exists yet; a record with missing keys is a failure.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,11 +10,8 @@ RECORD=verification/bytecode-hashes.json
 
 [ -f "$ARTIFACT" ] || { echo "missing $ARTIFACT; run forge build first" >&2; exit 1; }
 
-runtime=$(jq -r '.deployedBytecode.object' "$ARTIFACT")
-creation=$(jq -r '.bytecode.object' "$ARTIFACT")
-runtime_hash=$(cast keccak "$runtime")
-creation_hash=$(cast keccak "$creation")
-
+runtime_hash=$(cast keccak "$(jq -r '.deployedBytecode.object' "$ARTIFACT")")
+creation_hash=$(cast keccak "$(jq -r '.bytecode.object' "$ARTIFACT")")
 echo "creationCodeKeccak    (built)    $creation_hash"
 echo "runtimeTemplateKeccak (built)    $runtime_hash"
 
@@ -22,17 +20,29 @@ if [ ! -f "$RECORD" ]; then
   exit 0
 fi
 
-recorded_runtime=$(jq -r '.runtimeTemplateKeccak // empty' "$RECORD")
-recorded_creation=$(jq -r '.creationCodeKeccak // empty' "$RECORD")
-echo "creationCodeKeccak    (recorded) ${recorded_creation:-<none>}"
-echo "runtimeTemplateKeccak (recorded) ${recorded_runtime:-<none>}"
-
 status=0
-if [ -n "$recorded_runtime" ] && [ "$recorded_runtime" != "$runtime_hash" ]; then
-  echo "::error::runtime bytecode drifted from $RECORD" >&2; status=1
-fi
-if [ -n "$recorded_creation" ] && [ "$recorded_creation" != "$creation_hash" ]; then
-  echo "::error::creation bytecode drifted from $RECORD" >&2; status=1
-fi
-[ $status -eq 0 ] && echo "bytecode matches recorded hashes"
+# expect <jq path into RECORD> <built value> <label>
+expect() {
+  local recorded
+  # `// empty` would drop a legitimate `false`, so test for null explicitly.
+  recorded=$(jq -r "$1 | if . == null then \"\" else tostring end" "$RECORD")
+  if [ -z "$recorded" ]; then
+    echo "::error::$RECORD is missing $1" >&2; status=1
+  elif [ "$recorded" != "$2" ]; then
+    echo "::error::$3 drifted: recorded $recorded, built $2" >&2; status=1
+  else
+    echo "$3 ok ($2)"
+  fi
+}
+
+expect '.runtimeTemplateKeccak' "$runtime_hash" "runtimeTemplateKeccak"
+expect '.creationCodeKeccak' "$creation_hash" "creationCodeKeccak"
+expect '.compiler.solc' "$(jq -r '.metadata.compiler.version' "$ARTIFACT")" "compiler.solc"
+expect '.compiler.evmVersion' "$(jq -r '.metadata.settings.evmVersion' "$ARTIFACT")" "compiler.evmVersion"
+expect '.compiler.optimizer' "$(jq -r '.metadata.settings.optimizer.enabled' "$ARTIFACT")" "compiler.optimizer"
+expect '.compiler.optimizerRuns' "$(jq -r '.metadata.settings.optimizer.runs' "$ARTIFACT")" "compiler.optimizerRuns"
+expect '.compiler.viaIr' "$(jq -r '.metadata.settings.viaIR // false' "$ARTIFACT")" "compiler.viaIr"
+expect '.compiler.bytecodeHash' "$(jq -r '.metadata.settings.metadata.bytecodeHash' "$ARTIFACT")" "compiler.bytecodeHash"
+
+[ $status -eq 0 ] && echo "artifact matches $RECORD"
 exit $status

@@ -45,6 +45,26 @@ contract SelectorsTest is Test {
         assertEq(IRelayEntrypoint.hasAnyRole.selector, UpstreamIRelayEntrypoint.hasAnyRole.selector);
     }
 
+    /// @dev The human-readable table in UPSTREAM.md must agree with the compiled selectors.
+    function test_selectors_upstreamMdTable() public view {
+        string memory md = vm.readFile("test/upstream/UPSTREAM.md");
+        _assertRow(md, "pull(address,uint256)", IRelayEntrypoint.pull.selector);
+        _assertRow(md, "accountedBalance(address)", IRelayEntrypoint.accountedBalance.selector);
+        _assertRow(md, "KEEPER()", IRelayEntrypoint.KEEPER.selector);
+        _assertRow(md, "hasAnyRole(address,uint256)", IRelayEntrypoint.hasAnyRole.selector);
+        _assertRow(
+            md,
+            "claimRewards(uint256,uint256,(address,uint256)[],(address,uint256,uint256)[])",
+            IRelayEntrypoint.claimRewards.selector
+        );
+    }
+
+    function _assertRow(string memory md, string memory signature, bytes4 selector) internal pure {
+        // vm.toString(bytes4) pads to 32 bytes; go through `bytes` for the 4-byte hex form.
+        string memory row = string.concat("| `", signature, "` | `", vm.toString(abi.encodePacked(selector)), "` |");
+        assertTrue(vm.contains(md, row), string.concat("UPSTREAM.md row missing or stale: ", row));
+    }
+
     function test_selectors_upstreamText() public view {
         string memory entrypoint = vm.readFile("test/upstream/IRelayEntrypoint.sol");
         assertTrue(vm.contains(entrypoint, "function pull(address _token, uint256 _amount) external;"));

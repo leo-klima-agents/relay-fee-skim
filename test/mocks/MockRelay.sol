@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.36;
 
+import {IERC20Minimal} from "../../src/interfaces/IERC20Minimal.sol";
 import {IRelayEntrypoint} from "../../src/interfaces/IRelayEntrypoint.sol";
 
 interface IMintable {
@@ -8,7 +9,8 @@ interface IMintable {
 }
 
 /// @notice Mirrors the Relay semantics RelayFeeSkim depends on (RelayRoles, RelayBase.pull,
-///         RelayRewardsLib.pull / claimRewards) with the minimum machinery to drive them in tests.
+///         RelayRewardsLib.pull / claimRewards, and the Voter's claim validation) with the minimum
+///         machinery to drive them in tests.
 contract MockRelay {
     uint256 public constant KEEPER = 1 << 0;
     uint256 public constant VOTER_ROLE = 1 << 1;
@@ -20,6 +22,10 @@ contract MockRelay {
     error NoValueOnRootClaim();
     error RecipientNotSet();
     error TransferFailed();
+    /// @dev Upstream IVoter: both claim arrays empty.
+    error EmptyClaimRewardsParams();
+    /// @dev Upstream VotingRewardsManager: a claim with `maxCheckpoints == 0`.
+    error ZeroCheckpoints();
 
     mapping(address account => uint256 roles) public rolesOf;
     mapping(address token => uint256 accounted) public accountedBalance;
@@ -56,25 +62,38 @@ contract MockRelay {
 
     // ---- IRelayEntrypoint surface ----
 
-    /// @dev RelayBase.pull: COMPOUNDER | CONVERTER gate; RelayRewardsLib.pull: bound by un-accounted balance.
+    /// @dev RelayBase.pull: COMPOUNDER | CONVERTER gate; RelayRewardsLib.pull: bound by un-accounted balance,
+    ///      then a solady-style safeTransfer that tolerates no return data.
     function pull(address token, uint256 amount) external {
         if (!hasAnyRole(msg.sender, COMPOUNDER | CONVERTER)) revert NotAuthorized();
-        if (amount > _balance(token) - accountedBalance[token]) revert RewardExceedsBalance();
-        (bool ok, bytes memory data) =
-            token.call(abi.encodeWithSignature("transfer(address,uint256)", msg.sender, amount));
-        if (!ok || !(data.length == 0 || abi.decode(data, (bool)))) revert TransferFailed();
+        if (amount > IERC20Minimal(token).balanceOf(address(this)) - accountedBalance[token]) {
+            revert RewardExceedsBalance();
+        }
+        (bool ok, bytes memory data) = token.call(abi.encodeCall(IERC20Minimal.transfer, (msg.sender, amount)));
+        if (!ok || !(data.length == 0 || (data.length >= 32 && abi.decode(data, (bool))))) revert TransferFailed();
     }
 
-    /// @dev RelayRewardsLib.claimRewards: a root claim (`chainId == block.chainid`) pays the Relay itself
-    ///      and must carry zero value; a leaf claim needs a configured recipient, which this mock never has.
+    /// @dev RelayRewardsLib.claimRewards: a root claim (`chainId == block.chainid`) pays the Relay itself and
+    ///      must carry zero value; a leaf claim needs a configured recipient, which this mock never has.
+    ///      The Voter then rejects an empty request and any claim with zero checkpoints.
     function claimRewards(
         uint256 chainId,
         uint256,
-        IRelayEntrypoint.FeeClaim[] calldata,
-        IRelayEntrypoint.IncentiveClaim[] calldata
+        IRelayEntrypoint.FeeClaim[] calldata feeClaims,
+        IRelayEntrypoint.IncentiveClaim[] calldata incentiveClaims
     ) external payable {
-        if (chainId != block.chainid) revert RecipientNotSet();
+        if (chainId != block.chainid) {
+            revert RecipientNotSet();
+        }
         if (msg.value != 0) revert NoValueOnRootClaim();
+        if (feeClaims.length == 0 && incentiveClaims.length == 0) revert EmptyClaimRewardsParams();
+        for (uint256 i; i < feeClaims.length; ++i) {
+            if (feeClaims[i].maxCheckpoints == 0) revert ZeroCheckpoints();
+        }
+        for (uint256 i; i < incentiveClaims.length; ++i) {
+            if (incentiveClaims[i].maxCheckpoints == 0) revert ZeroCheckpoints();
+        }
+
         claimCalls++;
         for (uint256 i; i < _claimTokens.length; ++i) {
             address token = _claimTokens[i];
@@ -83,12 +102,6 @@ contract MockRelay {
             claimable[token] = 0;
             IMintable(token).mint(address(this), amount);
         }
-    }
-
-    function _balance(address token) internal view returns (uint256) {
-        (bool ok, bytes memory data) = token.staticcall(abi.encodeWithSignature("balanceOf(address)", address(this)));
-        require(ok && data.length >= 32, "balanceOf failed");
-        return abi.decode(data, (uint256));
     }
 }
 

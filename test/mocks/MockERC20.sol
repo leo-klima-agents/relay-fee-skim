@@ -4,26 +4,16 @@ pragma solidity 0.8.36;
 import {RelayFeeSkim} from "../../src/RelayFeeSkim.sol";
 import {IRelayEntrypoint} from "../../src/interfaces/IRelayEntrypoint.sol";
 
-/// @notice Minimal standard ERC-20: returns `true`, reverts on insufficient balance.
-contract MockERC20 {
-    string public name;
+/// @notice Shared ledger for every test token; each variant declares only its own `transfer`.
+abstract contract MockLedger {
     uint256 public totalSupply;
     mapping(address => uint256) public balanceOf;
 
     error InsufficientBalance();
 
-    constructor(string memory name_) {
-        name = name_;
-    }
-
     function mint(address to, uint256 amount) external {
         totalSupply += amount;
         balanceOf[to] += amount;
-    }
-
-    function transfer(address to, uint256 amount) external virtual returns (bool) {
-        _move(msg.sender, to, amount);
-        return true;
     }
 
     function _move(address from, address to, uint256 amount) internal {
@@ -33,35 +23,29 @@ contract MockERC20 {
     }
 }
 
-/// @notice USDT style: `transfer` moves tokens but returns no data at all.
-contract NoReturnERC20 {
-    uint256 public totalSupply;
-    mapping(address => uint256) public balanceOf;
+/// @notice Minimal standard ERC-20: returns `true`, reverts on insufficient balance.
+contract MockERC20 is MockLedger {
+    string public name;
 
-    error InsufficientBalance();
-
-    function mint(address to, uint256 amount) external {
-        totalSupply += amount;
-        balanceOf[to] += amount;
+    constructor(string memory name_) {
+        name = name_;
     }
 
+    function transfer(address to, uint256 amount) external virtual returns (bool) {
+        _move(msg.sender, to, amount);
+        return true;
+    }
+}
+
+/// @notice USDT style: `transfer` moves tokens but returns no data at all.
+contract NoReturnERC20 is MockLedger {
     function transfer(address to, uint256 amount) external {
-        if (balanceOf[msg.sender] < amount) revert InsufficientBalance();
-        balanceOf[msg.sender] -= amount;
-        balanceOf[to] += amount;
+        _move(msg.sender, to, amount);
     }
 }
 
 /// @notice Returns `false` from `transfer` without moving anything.
-contract ReturnsFalseERC20 {
-    uint256 public totalSupply;
-    mapping(address => uint256) public balanceOf;
-
-    function mint(address to, uint256 amount) external {
-        totalSupply += amount;
-        balanceOf[to] += amount;
-    }
-
+contract ReturnsFalseERC20 is MockLedger {
     function transfer(address, uint256) external pure returns (bool) {
         return false;
     }
@@ -110,9 +94,10 @@ contract ReentrantERC20 is MockERC20 {
         if (mode == Mode.ClaimAndSkim) {
             address[] memory tokens = new address[](1);
             tokens[0] = address(this);
+            IRelayEntrypoint.FeeClaim[] memory feeClaims = new IRelayEntrypoint.FeeClaim[](1);
+            feeClaims[0] = IRelayEntrypoint.FeeClaim({votingRewardsManager: address(0xB0B), maxCheckpoints: 1});
             call = abi.encodeCall(
-                RelayFeeSkim.claimAndSkim,
-                (RELAY, new IRelayEntrypoint.FeeClaim[](0), new IRelayEntrypoint.IncentiveClaim[](0), tokens)
+                RelayFeeSkim.claimAndSkim, (RELAY, feeClaims, new IRelayEntrypoint.IncentiveClaim[](0), tokens)
             );
         } else {
             call = abi.encodeCall(RelayFeeSkim.skim, (RELAY, address(this)));

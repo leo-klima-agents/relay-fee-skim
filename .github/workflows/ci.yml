@@ -72,9 +72,4 @@ jobs:
       - name: matches recorded hashes
         run: ./script/check-hashes.sh
       - name: standard JSON input is current
-        run: |
-          forge verify-contract --show-standard-json-input 0x0000000000000000000000000000000000000001 \
-            src/RelayFeeSkim.sol:RelayFeeSkim > /tmp/standard-input.json
-          jq -S . /tmp/standard-input.json > /tmp/a.json
-          jq -S . verification/RelayFeeSkim.standard-input.json > /tmp/b.json
-          cmp /tmp/a.json /tmp/b.json || { echo "::error::verification/RelayFeeSkim.standard-input.json is stale; regenerate it (see README)"; exit 1; }
+        run: ./script/check-standard-input.sh
