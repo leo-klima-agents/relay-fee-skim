@@ -91,6 +91,24 @@ literals, against `keccak256` of the signature strings, and against the vendored
 `test/upstream/UPSTREAM.md` and rerun the selector tests. If they fail, fix `src/interfaces/IRelayEntrypoint.sol`
 and redeploy under a bumped salt (`.../RelayFeeSkim/v2` in `script/Deploy.s.sol`).
 
+## Before deploying
+
+Open items, in order. Nothing below is automated; each step is a human decision or a manual run.
+
+1. **Wait for Aero's final Relay code.** The pin is `1.0.0-provisional.3`, which is undeployed. Refresh
+   `test/upstream/` to the final commit (see `UPSTREAM.md`) and run `forge test --match-path test/Selectors.t.sol`.
+   If anything fails, fix `src/interfaces/IRelayEntrypoint.sol`, regenerate `verification/`, and bump the salt.
+2. **Choose `FEE_BPS` and `FEE_SINK`.** Neither is chosen yet. `FEE_BPS` is 1 to 1000; `FEE_SINK` should be
+   an address that no reward token can blacklist (see Known limitations).
+3. **Record the deployment hashes.** `FEE_BPS=… FEE_SINK=… forge script script/Hashes.s.sol` fills the
+   `deployment` key in `verification/bytecode-hashes.json` (constructor args, init-code hash, predicted
+   address, runtime keccak). Commit it before deploying so the record predates the deployment.
+4. **Deploy and verify** (sections below), then confirm the on-chain address equals the recorded one.
+5. **Hand off.** Pass the address as `converter` in `RelayFactory.createMaxiRelay` (table above). The slot is
+   set once at creation, so check the address twice.
+6. **Agree the keeper procedure** with whoever runs the Relay's KEEPER: `skim` only balances that did not
+   arrive through `claimAndSkim`, never twice on the same idle balance, and before compounding.
+
 ## Build and test
 
 ```
