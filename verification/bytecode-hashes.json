@@ -4,13 +4,12 @@
     "evmVersion": "prague",
     "optimizer": true,
     "optimizerRuns": 1000000,
-    "solc": "0.8.36",
+    "solc": "0.8.36+commit.8a079791",
     "viaIr": false
   },
   "contract": "src/RelayFeeSkim.sol:RelayFeeSkim",
   "create2Deployer": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
   "creationCodeKeccak": "0x4f2c72c96b5286a261ca7bc9a75c4d89776ad61a0fca8f2023dc2b038eb57f84",
-  "deployment": "unset: rerun with FEE_BPS and FEE_SINK",
   "runtimeTemplateKeccak": "0x6d36bab4273eef78befb6b4de4dd30b30a34d338199426827d1f3c8101eb817a",
   "salt": "0x48f232915e6edaa4305e116efb746c5fbf2444bd05cf548db0ae1ccdcf693f33",
   "saltPreimage": "leo-klima-agents/relay-fee-skim/RelayFeeSkim/v1"

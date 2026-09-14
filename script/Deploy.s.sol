@@ -12,14 +12,16 @@ import {RelayFeeSkim} from "../src/RelayFeeSkim.sol";
 ///      Address preview without a key:
 ///        forge script script/Deploy.s.sol --sig "predict(uint256,address)" $FEE_BPS $FEE_SINK
 contract Deploy is Script {
-    /// @notice Arachnid's deterministic deployment proxy; the deployer forge routes salted creates through.
-    address public constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+    /// @notice Arachnid's deterministic deployment proxy, forge-std's `CREATE2_FACTORY`, exposed as a getter.
+    address public constant CREATE2_DEPLOYER = CREATE2_FACTORY;
+
+    /// @notice Mirror of RelayFeeSkim.MAX_FEE_BPS, checked here for a readable error before any broadcast.
+    ///         Solidity cannot read a constant through a contract type, so test/Deploy.t.sol pins the two equal.
+    uint256 public constant MAX_FEE_BPS = 1000;
 
     /// @notice Salt preimage. Bump the version suffix to redeploy (e.g. after an upstream pin change).
     string public constant SALT_PREIMAGE = "leo-klima-agents/relay-fee-skim/RelayFeeSkim/v1";
     bytes32 public constant SALT = keccak256(bytes(SALT_PREIMAGE));
-
-    uint256 internal constant MAX_FEE_BPS = 1000;
 
     /// @notice Constructor-args-appended init code for the given parameters.
     function initCode(uint256 feeBps, address feeSink) public pure returns (bytes memory) {
@@ -27,10 +29,9 @@ contract Deploy is Script {
     }
 
     /// @notice Address RelayFeeSkim(feeBps, feeSink) lands on when deployed via `run`.
+    /// @dev Depends on the exact creation bytecode (including the metadata hash) as well as the arguments.
     function predict(uint256 feeBps, address feeSink) public pure returns (address) {
-        bytes32 initCodeHash = keccak256(initCode(feeBps, feeSink));
-        return
-            address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), CREATE2_DEPLOYER, SALT, initCodeHash)))));
+        return computeCreate2Address(SALT, keccak256(initCode(feeBps, feeSink)), CREATE2_FACTORY);
     }
 
     function run() external returns (address deployed) {
@@ -40,9 +41,9 @@ contract Deploy is Script {
     }
 
     function deploy(uint256 feeBps, address feeSink) public returns (address deployed) {
-        require(feeBps != 0 && feeBps <= MAX_FEE_BPS, "FEE_BPS must be in 1..1000");
+        require(feeBps != 0 && feeBps <= MAX_FEE_BPS, "FEE_BPS out of range: 1..MAX_FEE_BPS");
         require(feeSink != address(0), "FEE_SINK must not be zero");
-        require(CREATE2_DEPLOYER.code.length != 0, "CREATE2 deployer not present on this chain");
+        require(CREATE2_FACTORY.code.length != 0, "CREATE2 deployer not present on this chain");
 
         deployed = predict(feeBps, feeSink);
         console.log("RelayFeeSkim  salt      :", vm.toString(SALT));
@@ -54,7 +55,7 @@ contract Deploy is Script {
             console.log("RelayFeeSkim  already deployed; nothing to do");
         } else {
             vm.startBroadcast();
-            (bool ok, bytes memory ret) = CREATE2_DEPLOYER.call(abi.encodePacked(SALT, initCode(feeBps, feeSink)));
+            (bool ok, bytes memory ret) = CREATE2_FACTORY.call(abi.encodePacked(SALT, initCode(feeBps, feeSink)));
             vm.stopBroadcast();
             require(ok && ret.length == 20, "CREATE2 deploy failed");
             // forge-lint: disable-next-line(unsafe-typecast)

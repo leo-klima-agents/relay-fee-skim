@@ -24,6 +24,9 @@ contract RelayFeeSkimTest is Test {
     MockERC20 internal tokenB;
     MockERC20 internal tokenC;
 
+    // The real Voter rejects an empty claim request and any claim with zero checkpoints, so every
+    // claim-path test sends one fee claim; the empty arrays exist only for the negative tests.
+    IRelayEntrypoint.FeeClaim[] internal oneFeeClaim;
     IRelayEntrypoint.FeeClaim[] internal noFeeClaims;
     IRelayEntrypoint.IncentiveClaim[] internal noIncentiveClaims;
 
@@ -32,6 +35,7 @@ contract RelayFeeSkimTest is Test {
         relay = new MockRelay();
         relay.grantRoles(keeper, relay.KEEPER());
         relay.grantRoles(address(skimmer), relay.CONVERTER());
+        oneFeeClaim.push(IRelayEntrypoint.FeeClaim({votingRewardsManager: makeAddr("vrm"), maxCheckpoints: 1}));
 
         MockERC20[3] memory ts = [new MockERC20("A"), new MockERC20("B"), new MockERC20("C")];
         for (uint256 i = 1; i < 3; ++i) {
@@ -60,7 +64,7 @@ contract RelayFeeSkimTest is Test {
 
     function _claimAndSkim(address caller, address[] memory tokens) internal returns (uint256[] memory fees) {
         vm.prank(caller);
-        fees = skimmer.claimAndSkim(address(relay), noFeeClaims, noIncentiveClaims, tokens);
+        fees = skimmer.claimAndSkim(address(relay), oneFeeClaim, noIncentiveClaims, tokens);
     }
 
     function _fee(uint256 base, uint256 bps) internal pure returns (uint256) {
@@ -161,6 +165,37 @@ contract RelayFeeSkimTest is Test {
         _claimAndSkim(stranger, _one(address(tokenA)));
     }
 
+    function test_claimAndSkim_emptyClaimsRejectedByRelay() public {
+        relay.setClaimable(address(tokenA), 10_000);
+        // Upstream the Voter refuses a request with no claims at all; the revert is the Relay's, not ours.
+        vm.expectRevert(MockRelay.EmptyClaimRewardsParams.selector);
+        vm.prank(stranger);
+        skimmer.claimAndSkim(address(relay), noFeeClaims, noIncentiveClaims, _one(address(tokenA)));
+    }
+
+    function test_claimAndSkim_zeroCheckpointsRejectedByRelay() public {
+        relay.setClaimable(address(tokenA), 10_000);
+        IRelayEntrypoint.FeeClaim[] memory bad = new IRelayEntrypoint.FeeClaim[](1);
+        bad[0] = IRelayEntrypoint.FeeClaim({votingRewardsManager: makeAddr("vrm"), maxCheckpoints: 0});
+
+        vm.expectRevert(MockRelay.ZeroCheckpoints.selector);
+        vm.prank(stranger);
+        skimmer.claimAndSkim(address(relay), bad, noIncentiveClaims, _one(address(tokenA)));
+    }
+
+    function test_claimAndSkim_incentiveClaimOnly() public {
+        relay.setClaimable(address(tokenA), 10_000);
+        IRelayEntrypoint.IncentiveClaim[] memory inc = new IRelayEntrypoint.IncentiveClaim[](1);
+        inc[0] =
+            IRelayEntrypoint.IncentiveClaim({votingRewardsManager: makeAddr("vrm"), programId: 7, maxCheckpoints: 3});
+
+        vm.prank(stranger);
+        uint256[] memory fees = skimmer.claimAndSkim(address(relay), noFeeClaims, inc, _one(address(tokenA)));
+
+        assertEq(fees[0], 500);
+        assertEq(relay.claimCalls(), 1);
+    }
+
     function test_claimAndSkim_emptyTokensRevertsNoFee() public {
         relay.setClaimable(address(tokenA), 10_000);
         vm.expectRevert(RelayFeeSkim.NoFee.selector);
@@ -227,12 +262,12 @@ contract RelayFeeSkimTest is Test {
         if (expected == 0) {
             vm.expectRevert(RelayFeeSkim.NoFee.selector);
             vm.prank(stranger);
-            s.claimAndSkim(address(relay), noFeeClaims, noIncentiveClaims, _one(address(tokenA)));
+            s.claimAndSkim(address(relay), oneFeeClaim, noIncentiveClaims, _one(address(tokenA)));
             return;
         }
 
         vm.prank(stranger);
-        uint256[] memory fees = s.claimAndSkim(address(relay), noFeeClaims, noIncentiveClaims, _one(address(tokenA)));
+        uint256[] memory fees = s.claimAndSkim(address(relay), oneFeeClaim, noIncentiveClaims, _one(address(tokenA)));
 
         assertEq(fees[0], expected);
         assertLe(fees[0] * BPS, uint256(delta) * bps, "fee exceeds share of delta");

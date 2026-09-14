@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Check that verification/RelayFeeSkim.standard-input.json still describes the current sources and the
+# bytecode-relevant compiler settings. Only those parts are compared, so the check does not depend on
+# which forge release shaped the rest of the file (e.g. 1.8.x adds `experimental` and `viaSSACFG`).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+RECORD=verification/RelayFeeSkim.standard-input.json
+PROJECTION='{
+  language,
+  sources,
+  settings: {
+    optimizer: .settings.optimizer,
+    evmVersion: .settings.evmVersion,
+    viaIR: (.settings.viaIR // false),
+    metadata: .settings.metadata,
+    remappings: (.settings.remappings // [])
+  }
+}'
+
+current=$(forge verify-contract --show-standard-json-input 0x0000000000000000000000000000000000000001 \
+  src/RelayFeeSkim.sol:RelayFeeSkim | jq -S "$PROJECTION")
+recorded=$(jq -S "$PROJECTION" "$RECORD")
+
+if [ "$current" != "$recorded" ]; then
+  echo "::error::$RECORD is stale; regenerate it (see README, Verify)" >&2
+  diff <(echo "$recorded") <(echo "$current") || true
+  exit 1
+fi
+echo "$RECORD matches current sources and settings"

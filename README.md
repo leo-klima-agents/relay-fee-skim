@@ -5,7 +5,7 @@ forwards it to a fixed sink. It sits in the Relay's `converter` slot. No owner, 
 no `notifyReward`. MIT, Foundry, zero runtime dependencies.
 
 ```
-claimAndSkim(relay, feeClaims, incentiveClaims, tokens):   # anyone
+claimAndSkim(relay, feeClaims, incentiveClaims, tokens):   # anyone; at least one claim, maxCheckpoints > 0
     before = relay.balanceOf(tokens); relay.claimRewards(chainid, 0, feeClaims, incentiveClaims)
     for t in tokens: fee = (balanceOf(t) - before[t]) * FEE_BPS / 10_000; relay.pull(t, fee); t.transfer(FEE_SINK, all held)
 skim(relay, token):                                         # relay's KEEPER only
@@ -27,9 +27,12 @@ skim(relay, token):                                         # relay's KEEPER onl
 
 **`claimAndSkim` is permissionless.** It reads the Relay's balance of each listed token, calls the Relay's
 own `claimRewards` for the root chain (no value), and taxes only the balance delta the claim produced. A
-repeat call finds no delta and reverts with `NoFee`. Anyone can run it, so fees are collected as soon as
+repeat call finds no delta and reverts with `NoFee`. Anyone can run it, so fees can be collected as soon as
 rewards are claimable; whoever calls it pays the claim gas. Tokens must be passed strictly ascending so a
-token cannot be listed twice and have its delta taxed twice.
+token cannot be listed twice and have its delta taxed twice. The claim arrays are forwarded to the Voter
+unchanged, and the Voter rejects a request with no claims at all (`EmptyClaimRewardsParams`) and any claim
+whose `maxCheckpoints` is zero (`ZeroCheckpoints`), so a real call always carries at least one sized claim.
+The tests mirror both rejections in `MockRelay`.
 
 **`skim` is gated on the Relay's KEEPER role.** It taxes whatever balance is idle on the Relay, meaning
 `balanceOf - accountedBalance`. It exists for the case `claimAndSkim` cannot see: rewards that reached the
@@ -37,9 +40,30 @@ Relay through some other route. It is gated because the base is not refreshed be
 in a row take `1 - 0.95^2 = 9.75%` of the original idle balance at a 5% rate rather than 5%. The Relay's
 keeper is expected to call it once per inflow, before the compounder converts the balance.
 
-**The one uncovered case.** If someone else claims a batch and compounds it in one transaction, the
-rewards never sit idle on the Relay and neither path can tax them. Against Aero's official keeper flow this
-is a matter of ordering: run `claimAndSkim` first, or have the keeper `skim` before compounding.
+## Known limitations
+
+These follow from the design (permissionless claim path, keeper-gated idle path, no storage, fixed sink) and
+are stated here so nobody relies on a guarantee the contract does not make.
+
+- **Claim and compound in one transaction.** If someone claims a batch and compounds it atomically, the
+  rewards never sit idle on the Relay and neither path can tax them.
+- **Direct claims bypass the fee.** The Relay's `claimRewards` is itself permissionless. Anyone who calls it
+  directly, or front-runs a pending `claimAndSkim`, lands the rewards untaxed and the skimmer's call reverts
+  `NoFee`. Those rewards are then reachable only through `skim`, so collection depends on the Relay's keeper.
+- **The two paths on one inflow compound the fee.** `skim` cannot tell an already-taxed balance from a
+  fresh one. Running `claimAndSkim` and then `skim` on the same inflow takes `FEE + FEE × (1 − FEE)`, the same
+  `1 − 0.95²` the double-skim test documents. The keeper procedure is therefore: `skim` only balances that
+  did not arrive through `claimAndSkim`, and never twice on the same idle balance.
+- **The sink is immutable.** If a token blacklists `FEE_SINK` (USDC/USDT style) or otherwise refuses the
+  transfer, every skim of that token reverts `TransferFailed` for the life of the contract and there is no
+  admin path to change the sink. Callers must omit that token.
+- **`Skimmed` events on the permissionless path are only as trustworthy as the token.** `tokens` is
+  caller-supplied, so a hostile token that lies about `balanceOf(relay)` can make the skimmer emit a
+  `Skimmed(realRelay, hostileToken, …)` event with arbitrary numbers. No value moves. Indexers should count
+  only tokens the Relay registers as reward tokens.
+- **Absurd balances revert instead of saturating.** `base × FEE_BPS` uses checked arithmetic, so a token
+  reporting a delta above `2²⁵⁶ / FEE_BPS` reverts the whole `claimAndSkim` batch with a panic rather than
+  yielding a zero fee. No real token reaches that range.
 
 ## Relay hand-off
 
@@ -76,14 +100,23 @@ forge test
 FOUNDRY_PROFILE=ci forge test        # 10_000 fuzz runs, what CI runs
 ```
 
-`foundry.toml` pins `solc 0.8.36` to match the Relay's own compiler (move only when Aero's final code does), `evm_version = "prague"`, optimizer on at 1,000,000 runs,
-`bytecode_hash = "ipfs"`, `cbor_metadata = true`. `forge-std` is a submodule used by tests and scripts only. CI pins Foundry `v1.8.1` exactly (never `stable`); the hashes under `verification/` were produced with it.
+`foundry.toml` pins `solc 0.8.36` to match the Relay's own compiler (move only when Aero's final code does),
+`evm_version = "prague"`, optimizer on at 1,000,000 runs, `bytecode_hash = "ipfs"`, `cbor_metadata = true`.
+Bytecode depends on solc and those settings, not on the forge release. `forge-std` is a submodule used by
+tests and scripts only.
+
+CI pins Foundry `v1.8.1` exactly (never `stable`). Two things in the repo assume that release: the
+`[lint]` block in `foundry.toml` names 1.8.x lint ids, so `forge lint` on an older forge errors with
+"Unknown lint ID" (`forge build` and `forge test` are unaffected), and `verification/RelayFeeSkim.standard-input.json`
+is shaped by the forge that generated it (see Verify).
 
 ## Deploy
 
 CREATE2 through forge's default deterministic deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`) with
-salt `keccak256("leo-klima-agents/relay-fee-skim/RelayFeeSkim/v1")`, so the address depends only on the
-constructor arguments.
+salt `keccak256("leo-klima-agents/relay-fee-skim/RelayFeeSkim/v1")`. The address depends on the constructor
+arguments **and on the exact creation bytecode**, which includes the ipfs metadata hash of the sources: a
+comment edit in `src/` or a compiler-setting change moves it. Run `script/check-hashes.sh` before
+re-running the script against a chain that already has a deployment.
 
 ```
 export FEE_BPS=500                      # 1..1000
@@ -123,13 +156,18 @@ forge verify-contract --chain base --verifier sourcify \
 
 Committed under `verification/`:
 
-- `RelayFeeSkim.standard-input.json`: the exact solc standard JSON input, for manual verification.
-  Regenerate with
+- `RelayFeeSkim.standard-input.json`: the solc standard JSON input, for manual verification. Regenerate
+  with the pinned forge:
   `forge verify-contract --show-standard-json-input 0x0000000000000000000000000000000000000001 src/RelayFeeSkim.sol:RelayFeeSkim > verification/RelayFeeSkim.standard-input.json`.
-- `bytecode-hashes.json`: salt, CREATE2 deployer, keccak of the creation code and of the runtime
-  template (immutable slots zeroed). With `FEE_BPS` and `FEE_SINK` set, `forge script script/Hashes.s.sol`
-  also records the constructor args, init-code hash, predicted address and the keccak of the runtime
-  bytecode with immutables filled in. `script/check-hashes.sh` compares a fresh build against the record.
+  `script/check-standard-input.sh` compares only the sources and the bytecode-relevant settings, so it
+  passes on any forge release; the surrounding key set (for example `experimental`, `viaSSACFG`) is
+  whatever forge emitted.
+- `bytecode-hashes.json`: salt, CREATE2 deployer, keccak of the creation code and of the runtime template
+  (immutable slots zeroed), and the compiler settings read back from the build artifact's metadata. With
+  `FEE_BPS` and `FEE_SINK` set, `forge script script/Hashes.s.sol` also records the constructor args,
+  init-code hash, predicted address and the keccak of the runtime bytecode with immutables filled in;
+  without them the `deployment` key is absent. `script/check-hashes.sh` compares a fresh build against
+  every recorded value and fails if any key is missing.
 
 CI runs `forge fmt --check`, `forge build --sizes`, `forge test` at the high fuzz profile, the sha256 check
 of the vendored upstream files, and a reproducible-build job that builds twice from clean, compares the
@@ -143,7 +181,8 @@ src/interfaces/IRelayEntrypoint.sol  the five Relay members it calls, plus the t
 src/interfaces/IERC20Minimal.sol     balanceOf, transfer
 script/Deploy.s.sol                  CREATE2 deploy + predict
 script/Hashes.s.sol                  writes verification/bytecode-hashes.json
-script/check-hashes.sh               CI drift check
+script/check-hashes.sh               CI drift check (hashes + compiler settings)
+script/check-standard-input.sh       CI check that the committed standard JSON input is current
 test/RelayFeeSkim.t.sol              behaviour, fuzz, token edge cases, reentrancy
 test/Selectors.t.sol                 upstream selector pin
 test/Deploy.t.sol                    deploy script against a locally etched CREATE2 proxy
