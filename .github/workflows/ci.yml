@@ -1,0 +1,87 @@
+# SPDX-FileCopyrightText: 2026 Klima Protocol
+# SPDX-License-Identifier: MIT
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  FOUNDRY_PROFILE: ci
+  # Pinned exact release, never "stable": the [lint] ids and the committed standard JSON input assume it.
+  FOUNDRY_VERSION: v1.8.1
+
+jobs:
+  check:
+    name: fmt, build, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+      - name: forge fmt --check
+        run: forge fmt --check
+      - name: forge build --sizes
+        run: forge build --sizes
+      - name: forge lint
+        run: forge lint --deny warnings
+      - name: forge test (ci fuzz profile)
+        run: forge test -vvv
+
+  upstream-pin:
+    name: vendored upstream sha256
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: sha256sum -c
+        working-directory: test/upstream
+        run: sha256sum -c SHA256SUMS
+      - name: UPSTREAM.md lists the same hashes
+        working-directory: test/upstream
+        run: |
+          while read -r hash file; do
+            grep -q "$hash  $file" UPSTREAM.md || { echo "::error::$file hash missing from UPSTREAM.md"; exit 1; }
+          done < SHA256SUMS
+
+  reuse:
+    name: REUSE compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: fsfe/reuse-action@9a55738c6490d015afe69ad187520395d2b7a1fa # v6.0.0
+
+  reproducible-build:
+    name: reproducible build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          version: ${{ env.FOUNDRY_VERSION }}
+      - name: build #1 from clean
+        run: |
+          forge clean
+          forge build --force
+          jq -r '.deployedBytecode.object' out/RelayFeeSkim.sol/RelayFeeSkim.json > /tmp/runtime1.hex
+          jq -r '.bytecode.object' out/RelayFeeSkim.sol/RelayFeeSkim.json > /tmp/creation1.hex
+      - name: build #2 from clean
+        run: |
+          forge clean
+          forge build --force
+          jq -r '.deployedBytecode.object' out/RelayFeeSkim.sol/RelayFeeSkim.json > /tmp/runtime2.hex
+          jq -r '.bytecode.object' out/RelayFeeSkim.sol/RelayFeeSkim.json > /tmp/creation2.hex
+      - name: builds are identical
+        run: |
+          cmp /tmp/runtime1.hex /tmp/runtime2.hex
+          cmp /tmp/creation1.hex /tmp/creation2.hex
+      - name: matches recorded hashes
+        run: ./script/check-hashes.sh
+      - name: standard JSON input is current
+        run: ./script/check-standard-input.sh

@@ -1,0 +1,24 @@
+{
+  "compiler": {
+    "bytecodeHash": "ipfs",
+    "evmVersion": "prague",
+    "optimizer": true,
+    "optimizerRuns": 1000000,
+    "solc": "0.8.36+commit.8a079791",
+    "viaIr": false
+  },
+  "contract": "src/RelayFeeSkim.sol:RelayFeeSkim",
+  "create2Deployer": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+  "creationCodeKeccak": "0x0db63547b2edb026a385e6005affd02fa2d7a28e522205d8a1f56d7f0af69b58",
+  "deployment": {
+    "address": "0xbdcF26b3C2CA33e73B1E1b265857641d079284f4",
+    "constructorArgs": "0x00000000000000000000000000000000000000000000000000000000000001f4000000000000000000000000f624f9fe1d3165c5ca32c7fbdbf82f4a5b1d2d0e",
+    "feeBps": 500,
+    "feeSink": "0xf624f9Fe1D3165c5Ca32c7Fbdbf82f4a5b1D2d0e",
+    "initCodeHash": "0xf35efce1679e54014994d6db756db51e8e074369b569ae06efc3e15ce0c6429c",
+    "runtimeKeccak": "0xdfa85c0d00e2e8462fa1e6e8bbf4cc89bad9c79e7cade03df5e3ffca070d7e3c"
+  },
+  "runtimeTemplateKeccak": "0x79ece32ea540991aa563c741f280e9be69a09fc1c23f045ed9d645f0bbf8e870",
+  "salt": "0xbf623e9fcf318358e7aba5a422c42e494e082543f799cec759fb811315f7bf18",
+  "saltPreimage": "klimaprotocol.com/RelayFeeSkim/v1"
+}

@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 Klima Protocol
+# SPDX-License-Identifier: MIT
+
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+script = "script"
+libs = ["lib"]
+remappings = ["forge-std/=lib/forge-std/src/"]
+
+# Matches the Relay's own compiler (metadex-public pins 0.8.36); move only when Aero's final code does.
+solc_version = "0.8.36"
+evm_version = "prague"
+optimizer = true
+optimizer_runs = 1_000_000
+via_ir = false
+bytecode_hash = "ipfs"
+cbor_metadata = true
+
+# Vendored upstream fixtures. IRelayEntrypoint.sol has no imports and compiles as-is; the other two
+# pull in the rest of the metadex tree and are checked as text by test/Selectors.t.sol instead.
+skip = ["test/upstream/IRelay.sol", "test/upstream/ILeafVoter.sol"]
+
+fs_permissions = [
+  { access = "read", path = "./test/upstream" },
+  { access = "read", path = "./out" },
+  { access = "read-write", path = "./verification" },
+]
+
+[profile.default.fuzz]
+runs = 256
+
+[profile.ci.fuzz]
+runs = 10_000
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+quote_style = "double"
+number_underscore = "thousands"
+ignore = ["./test/upstream/*.sol", "lib/**"]
+
+[lint]
+# CI runs `forge lint --deny warnings`; anything not listed here is disabled inline with a reason.
+exclude_lints = [
+  "reentrancy-no-eth",       # the six-line transient lock is the guard the linter asks for
+  "reentrancy-events",       # Skimmed is emitted after pull by design: it reports the completed move
+  "calls-loop",              # claimAndSkim iterates caller-supplied tokens; each needs its own calls
+  "require-revert-in-loop",  # TokensNotSorted must abort inside the sort check
+  "low-level-calls",         # _safeTransfer is a raw `transfer` call by specification
+  "uninitialized-local",     # `bool any` and `new uint256[](n)` rely on zero defaults
+  "literal-instead-of-constant",  # test amounts
+  "multi-contract-file",          # mock variants share a file
+  "missing-inheritance",          # mocks implement the interfaces structurally on purpose
+  "pragma-inconsistent",          # vendored upstream IRelayEntrypoint.sol is ^0.8.0
+  "unsafe-cheatcode",             # readFile / setEnv in tests and scripts
+  "unused-return",                # vm.serialize* and ignored test call results
+]

@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 Klima Protocol
+# SPDX-License-Identifier: MIT
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+  - package-ecosystem: gitsubmodule
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: deps
