@@ -1,0 +1,42 @@
+[profile.default]
+src = "src"
+out = "out"
+test = "test"
+script = "script"
+libs = ["lib"]
+remappings = ["forge-std/=lib/forge-std/src/"]
+
+solc_version = "0.8.36"
+evm_version = "prague"
+optimizer = true
+optimizer_runs = 1_000_000
+via_ir = false
+bytecode_hash = "ipfs"
+cbor_metadata = true
+
+# Vendored upstream fixtures. IRelayEntrypoint.sol has no imports and compiles as-is; the other two
+# pull in the rest of the metadex tree and are checked as text by test/Selectors.t.sol instead.
+skip = ["test/upstream/IRelay.sol", "test/upstream/ILeafVoter.sol"]
+
+fs_permissions = [
+  { access = "read", path = "./test/upstream" },
+  { access = "read", path = "./out" },
+  { access = "read-write", path = "./verification" },
+]
+
+[profile.default.fuzz]
+runs = 256
+
+[profile.ci]
+[profile.ci.fuzz]
+runs = 10_000
+max_test_rejects = 1_000_000
+
+[fmt]
+line_length = 120
+tab_width = 4
+bracket_spacing = false
+int_types = "long"
+quote_style = "double"
+number_underscore = "thousands"
+ignore = ["./test/upstream/*.sol", "lib/**"]
