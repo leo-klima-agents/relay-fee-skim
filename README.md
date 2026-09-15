@@ -6,8 +6,9 @@ SPDX-License-Identifier: MIT
 # RelayFeeSkim
 
 A 90-line immutable contract that Klima Protocol places in the `converter` slot of its Metadex Maxi
-Relay. It claims the Relay's rewards on anyone's behalf and pulls a fixed 5% of what the claim brought
-in to a fixed sink. It never swaps, never calls `notifyReward` or `compound`, holds no storage and has
+Relay, deployed on Base at [`0xa9bE0D3279eC1E0fF5e62be19793A06F47ba88Fb`](https://basescan.org/address/0xa9bE0D3279eC1E0fF5e62be19793A06F47ba88Fb#code).
+It claims the Relay's rewards on anyone's behalf and pulls a fixed 5% of what the claim brought in to a
+fixed sink. It never swaps, never calls `notifyReward` or `compound`, holds no storage and has
 no owner. Aero's official Compounder occupies the `compounder` slot and processes the other 95%.
 
 The whole mechanism is the single external function `claimAndSkim` in
@@ -75,12 +76,16 @@ immutable, so the CONVERTER grant to this contract is made once, at creation.
 |---|---|
 | Network | Base |
 | Address | [`0xa9bE0D3279eC1E0fF5e62be19793A06F47ba88Fb`](https://basescan.org/address/0xa9bE0D3279eC1E0fF5e62be19793A06F47ba88Fb#code) |
+| Verified source | [Basescan](https://basescan.org/address/0xa9bE0D3279eC1E0fF5e62be19793A06F47ba88Fb#code), [Sourcify](https://sourcify.dev/#/lookup/0xa9bE0D3279eC1E0fF5e62be19793A06F47ba88Fb) (exact runtime match) |
+| Runtime code hash | `0x26ca5d6df3f33e0e45e32900630a6bf99fad4540df3fbbd5d8209027475279cc` |
 | `FEE_BPS` | 500 (5%) |
 | `FEE_SINK` | `0xf624f9Fe1D3165c5Ca32c7Fbdbf82f4a5b1D2d0e`, a 2-of-3 Safe |
 | Method | CREATE2 through the default deployer `0x4e59b44847b379578588920cA78FbF26c0B4956C` |
 | Salt | `keccak256("klimaprotocol.com/RelayFeeSkim/v1")` |
 
-The address is recorded in `verification/bytecode-hashes.json`, and a test pins it to `script/Deploy.s.sol`.
+The on-chain runtime bytecode hashes to the `deployment.runtimeKeccak` recorded in
+`verification/bytecode-hashes.json`; `verification/RelayFeeSkim.standard-input.json` is the compiler input
+both explorers verified against.
 
 ## Upstream pin
 
@@ -95,6 +100,9 @@ tests, and a corrected contract is deployed under a new salt.
 
 ## Reviewing
 
+- The deployed code is this repository's code:
+  `cast keccak $(cast code 0xa9bE0D3279eC1E0fF5e62be19793A06F47ba88Fb --rpc-url https://mainnet.base.org)`
+  returns the runtime code hash above.
 - `src/RelayFeeSkim.sol` and `src/interfaces/` are the whole surface; the rest is tests, tooling and
   records.
 - `forge test` runs 41 tests, including fuzzing and both reentrancy scenarios, against `test/mocks/MockRelay.sol`,
