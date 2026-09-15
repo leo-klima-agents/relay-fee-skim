@@ -5,12 +5,10 @@ SPDX-License-Identifier: MIT
 
 # Vendored upstream fixtures
 
-Byte-identical copies of the three MIT-licensed interface files RelayFeeSkim is built against.
-They are **test fixtures only**: `src/` never imports them. `test/Selectors.t.sol` compiles
-`IRelayEntrypoint.sol` and compares selectors directly; `IRelay.sol` and `ILeafVoter.sol` import
-the rest of the metadex tree, so they are excluded from compilation (`skip` in `foundry.toml`) and
-checked as text for the exact declarations that produce the `claimRewards` selector and the two
-claim structs.
+Byte-identical copies of the three MIT interface files RelayFeeSkim is built against; `src/` never
+imports them. `test/Selectors.t.sol` compiles `IRelayEntrypoint.sol` and compares selectors; `IRelay.sol`
+and `ILeafVoter.sol` import the rest of the metadex tree, so `foundry.toml` skips them and the test checks
+their `claimRewards` and struct declarations as text.
 
 | Local file | Upstream path | License |
 |---|---|---|
@@ -30,9 +28,7 @@ d10e57499d9c91795eac315333e39998fcfb9e609b8f52831c49cdc25aeb841c  IRelayEntrypoi
 
 ## Selectors pinned from these files
 
-RelayFeeSkim calls two Relay members. The vendored `IRelayEntrypoint.sol` declares more (`compound`,
-`notifyReward`, `TOKEN`, `accountedBalance`, `KEEPER`, `owner`, `hasAnyRole`); they are kept for
-fidelity but nothing here depends on them.
+The vendored `IRelayEntrypoint.sol` declares more members than the two used here; they are kept for fidelity.
 
 | Member | Selector | Source |
 |---|---|---|
@@ -51,5 +47,5 @@ done
 forge test --match-path test/Selectors.t.sol
 ```
 
-If any selector test fails after a refresh, the deployed contract no longer matches the Relay it
-targets: fix `src/interfaces/IRelayEntrypoint.sol`, then redeploy under a bumped salt.
+If a selector test fails after a refresh, fix `src/interfaces/IRelayEntrypoint.sol` and redeploy under a
+bumped salt.

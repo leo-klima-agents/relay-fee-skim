@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Klima Protocol
 # SPDX-License-Identifier: MIT
-# Check that verification/RelayFeeSkim.standard-input.json describes the current sources and the
-# bytecode-relevant compiler settings. Only those parts are compared, so the check is independent of the
-# forge release that shaped the rest of the file.
+# The committed standard JSON input must match the current sources and bytecode-relevant settings. Only
+# those parts are compared, so any forge release can run this.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

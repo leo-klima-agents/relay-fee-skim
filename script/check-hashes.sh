@@ -1,26 +1,15 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: 2026 Klima Protocol
 # SPDX-License-Identifier: MIT
-# Compare the current build's RelayFeeSkim artifact against verification/bytecode-hashes.json: bytecode
-# hashes, compiler settings and the recorded deployment. Exits 0 with no record; a record with missing keys fails.
+# Compare the build artifact with verification/bytecode-hashes.json: bytecode hashes, compiler settings and
+# the recorded deployment, whose constructor args, init-code hash and CREATE2 address are recomputed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ARTIFACT=out/RelayFeeSkim.sol/RelayFeeSkim.json
 RECORD=verification/bytecode-hashes.json
-
 [ -f "$ARTIFACT" ] || { echo "missing $ARTIFACT; run forge build first" >&2; exit 1; }
-
-creation=$(jq -r '.bytecode.object' "$ARTIFACT")
-runtime_hash=$(cast keccak "$(jq -r '.deployedBytecode.object' "$ARTIFACT")")
-creation_hash=$(cast keccak "$creation")
-echo "creationCodeKeccak    (built)    $creation_hash"
-echo "runtimeTemplateKeccak (built)    $runtime_hash"
-
-if [ ! -f "$RECORD" ]; then
-  echo "no $RECORD yet; nothing to compare"
-  exit 0
-fi
+[ -f "$RECORD" ] || { echo "missing $RECORD; run forge script script/Hashes.s.sol" >&2; exit 1; }
 
 status=0
 # expect <jq path into RECORD> <built value> <label>
@@ -36,8 +25,9 @@ expect() {
   fi
 }
 
-expect '.runtimeTemplateKeccak' "$runtime_hash" "runtimeTemplateKeccak"
-expect '.creationCodeKeccak' "$creation_hash" "creationCodeKeccak"
+creation=$(jq -r '.bytecode.object' "$ARTIFACT")
+expect '.runtimeTemplateKeccak' "$(cast keccak "$(jq -r '.deployedBytecode.object' "$ARTIFACT")")" "runtimeTemplateKeccak"
+expect '.creationCodeKeccak' "$(cast keccak "$creation")" "creationCodeKeccak"
 expect '.compiler.solc' "$(jq -r '.metadata.compiler.version' "$ARTIFACT")" "compiler.solc"
 expect '.compiler.evmVersion' "$(jq -r '.metadata.settings.evmVersion' "$ARTIFACT")" "compiler.evmVersion"
 expect '.compiler.optimizer' "$(jq -r '.metadata.settings.optimizer.enabled' "$ARTIFACT")" "compiler.optimizer"

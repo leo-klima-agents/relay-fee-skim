@@ -7,12 +7,8 @@ import {Script} from "forge-std/Script.sol";
 import {RelayFeeSkim} from "../src/RelayFeeSkim.sol";
 import {Deploy} from "./Deploy.s.sol";
 
-/// @notice Writes verification/bytecode-hashes.json from the current build.
-/// @dev Records the argument-independent hashes (creation code, runtime template with immutable slots
-///      zeroed), the compiler settings read from the build artifact's metadata, and the canonical
-///      deployment from Deploy.s.sol: constructor args, init-code hash, CREATE2 address and the keccak of
-///      the runtime bytecode with immutables filled in.
-///        forge script script/Hashes.s.sol
+/// @notice Writes verification/bytecode-hashes.json: bytecode hashes, compiler settings from the build
+///         artifact, and the canonical deployment from Deploy.s.sol.
 contract Hashes is Script {
     string internal constant ARTIFACT = "out/RelayFeeSkim.sol/RelayFeeSkim.json";
     string internal constant OUT = "verification/bytecode-hashes.json";
@@ -39,7 +35,7 @@ contract Hashes is Script {
         string memory root = "hashes";
         vm.serializeString(root, "contract", "src/RelayFeeSkim.sol:RelayFeeSkim");
         vm.serializeString(root, "compiler", compilerJson);
-        vm.serializeAddress(root, "create2Deployer", d.CREATE2_DEPLOYER());
+        vm.serializeAddress(root, "create2Deployer", CREATE2_FACTORY);
         vm.serializeString(root, "saltPreimage", d.SALT_PREIMAGE());
         vm.serializeBytes32(root, "salt", d.SALT());
         vm.serializeBytes32(root, "creationCodeKeccak", keccak256(creation));

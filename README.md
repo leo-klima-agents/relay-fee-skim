@@ -5,9 +5,9 @@ SPDX-License-Identifier: MIT
 
 # RelayFeeSkim
 
-A single immutable contract that takes a fixed fee from a Metadex (Aero v3) Relay's rewards and
-forwards it to a fixed sink. It sits in the Relay's `converter` slot. No owner, no storage, no swaps,
-no `notifyReward`. MIT, Foundry, zero runtime dependencies.
+One immutable contract that takes a fixed fee from a Metadex (Aero v3) Relay's rewards and forwards it to a
+fixed sink. It sits in the Relay's `converter` slot. No owner, no storage, no swaps, no `notifyReward`.
+MIT, Foundry, zero runtime dependencies.
 
 ```
 claimAndSkim(relay, feeClaims, incentiveClaims, tokens):   # anyone; at least one claim, maxCheckpoints > 0
@@ -19,45 +19,35 @@ claimAndSkim(relay, feeClaims, incentiveClaims, tokens):   # anyone; at least on
 
 ## Guarantees
 
-| Property | Where it is enforced |
+| Property | Enforced by |
 |---|---|
-| Fee rate is at most 10% and fixed for the life of the contract | `MAX_FEE_BPS = 1_000` in source; `FEE_BPS` is an immutable checked in the constructor |
-| One call moves at most `FEE_BPS / 10_000` of the rewards it claimed | `_take` computes `fee = delta * FEE_BPS / BPS` and pulls exactly `fee`; fuzz-tested in `test/RelayFeeSkim.t.sol` |
-| Balances already on the Relay are never touched | Only the balance delta produced by this call's own `claimRewards` is taxed; the Relay's `pull` additionally reverts above `balanceOf(relay) - accountedBalance(token)`, so notified rewards are unreachable |
-| Nothing ever strands on this contract | After every pull the entire held balance of that token, not just `fee`, is forwarded to `FEE_SINK` |
-| No admin surface | No owner, no setters, no storage, no `receive`, no `fallback`, no `notifyReward`, no swaps. The only mutable state is a transient reentrancy lock |
-| Untrusted inputs cannot extract value | `relay` and `tokens` are caller-supplied. A fake relay or hostile token can only cause the contract to forward whatever it already holds to the fixed sink. The lock blocks a hostile token from reentering to tax another token twice |
+| Fee rate at most 10%, fixed for life | `MAX_FEE_BPS = 1_000`; `FEE_BPS` is an immutable checked in the constructor |
+| One call moves at most `FEE_BPS / 10_000` of what it claimed | `_take` pulls exactly `delta * FEE_BPS / BPS`; fuzz-tested |
+| Balances already on the Relay are never touched | Only this call's own claim delta is taxed, and the Relay's `pull` reverts above `balanceOf - accountedBalance` |
+| Nothing strands on this contract | The whole held balance, not just `fee`, is forwarded after every pull |
+| No admin surface | No owner, setters, storage, `receive` or `fallback`; the only mutable state is a transient reentrancy lock |
+| Untrusted inputs cannot extract value | `relay` and `tokens` are caller-supplied; a fake relay or hostile token can only forward what the contract already holds to the fixed sink, and the lock blocks a reentrant second tax |
 
 ## How it collects
 
-`claimAndSkim` is permissionless. It reads the Relay's balance of each listed token, calls the Relay's own
-`claimRewards` for the root chain (no value), and taxes only the balance delta the claim produced. A repeat
-call finds no delta and reverts with `NoFee`. Anyone can run it, so fees can be collected as soon as rewards
-are claimable; whoever calls it pays the claim gas. Tokens must be passed strictly ascending so a token
-cannot be listed twice and have its delta taxed twice. The claim arrays are forwarded to the Voter
-unchanged, and the Voter rejects a request with no claims at all (`EmptyClaimRewardsParams`) and any claim
-whose `maxCheckpoints` is zero (`ZeroCheckpoints`), so a real call always carries at least one sized claim.
-The tests mirror both rejections in `MockRelay`.
+`claimAndSkim` is permissionless. It reads the Relay's balance of each token, calls the Relay's own root-chain
+`claimRewards`, and taxes the balance delta. A repeat call finds no delta and reverts `NoFee`. Whoever calls
+pays the claim gas. Tokens must be strictly ascending so none is taxed twice. The claim arrays go to the
+Voter unchanged; it rejects an empty request and any claim with zero `maxCheckpoints`, and `MockRelay`
+mirrors both rejections.
 
 ## Known limitations
 
-These follow from the design (one permissionless claim path, no storage, fixed sink) and are stated here so
-nobody relies on a guarantee the contract does not make.
-
 - **Rewards claimed by someone else are not taxed.** The Relay's `claimRewards` is itself permissionless.
-  Anything claimed directly, by Aero's keeper flow, or by front-running a pending `claimAndSkim`, lands on
-  the Relay untaxed and stays that way: this contract has no path that taxes an idle balance. Fee revenue
-  therefore depends on `claimAndSkim` being the call that claims.
-- **The sink is immutable.** If a token blacklists `FEE_SINK` (USDC/USDT style) or otherwise refuses the
-  transfer, every skim of that token reverts `TransferFailed` for the life of the contract and there is no
-  admin path to change the sink. Callers must omit that token.
-- **`Skimmed` events are only as trustworthy as the token.** `tokens` is caller-supplied, so a hostile token
-  that lies about `balanceOf(relay)` can make the skimmer emit a `Skimmed(realRelay, hostileToken, …)` event
-  with arbitrary numbers. No value moves. Indexers should count only tokens the Relay registers as reward
-  tokens.
-- **Absurd balances revert instead of saturating.** `delta × FEE_BPS` uses checked arithmetic, so a token
-  reporting a delta above `2²⁵⁶ / FEE_BPS` reverts the whole batch with a panic rather than yielding a zero
-  fee. No real token reaches that range.
+  Anything claimed directly, by Aero's keeper, or by front-running a pending `claimAndSkim` lands untaxed and
+  stays so; there is no path that taxes an idle balance.
+- **The sink is immutable.** A token that blacklists `FEE_SINK` reverts every skim of that token for the life
+  of the contract. Callers must omit it.
+- **`Skimmed` events are only as trustworthy as the token.** A hostile token can lie about `balanceOf(relay)`
+  and make the contract emit arbitrary numbers. No value moves. Indexers should count only tokens the Relay
+  registers as reward tokens.
+- **Absurd balances revert instead of saturating.** A delta above `2²⁵⁶ / FEE_BPS` panics the whole batch.
+  No real token reaches that range.
 
 ## Relay hand-off
 
@@ -66,36 +56,31 @@ nobody relies on a guarantee the contract does not make.
 | `CreateParams` field | Value |
 |---|---|
 | `admin` | your multisig |
-| `converter` | this contract's address (grants it `CONVERTER`, which is what authorizes `pull`) |
+| `converter` | this contract's address (grants it `CONVERTER`, which authorizes `pull`) |
 | `compounder` | Aero's official Compounder entrypoint |
 | `rewardToken` | `address(0)` |
 
-`initialize` grants `CONVERTER` to `converter` at creation; the public role paths refuse that bit
-afterwards, so the slot is set once.
+`initialize` grants `CONVERTER` at creation and the public role paths refuse that bit afterwards, so the
+slot is set once.
 
 ## Upstream pin
 
-Built against https://github.com/dromos-labs/metadex-public at commit
-`b032bb7f55eff31e081196754e0fdbc217f978d2` (`1.0.0-provisional.3`, **undeployed**). The three MIT interface files are vendored
-byte-for-byte under [`test/upstream/`](test/upstream/UPSTREAM.md) and pinned by sha256 in CI.
-`test/Selectors.t.sol` asserts the two selectors this contract depends on, `pull` and `claimRewards`,
-against literals, against `keccak256` of the signature strings, and against the vendored files.
+Built against https://github.com/dromos-labs/metadex-public at `b032bb7f55eff31e081196754e0fdbc217f978d2`
+(`1.0.0-provisional.3`, **undeployed**). The three MIT interface files are vendored byte-for-byte under
+[`test/upstream/`](test/upstream/UPSTREAM.md) and pinned by sha256 in CI. `test/Selectors.t.sol` asserts the
+two selectors this contract uses, `pull` and `claimRewards`, against literals, `keccak256` of the signatures,
+and the vendored files.
 
-**Do not deploy before Aero's final Relay code lands.** When it does, refresh the pin as described in
-`test/upstream/UPSTREAM.md` and rerun the selector tests. If they fail, fix `src/interfaces/IRelayEntrypoint.sol`
-and redeploy under a bumped salt (`.../RelayFeeSkim/v2` in `script/Deploy.s.sol`).
+**Do not deploy before Aero's final Relay code lands.** Then refresh the pin per `test/upstream/UPSTREAM.md`
+and rerun the selector tests. If they fail, fix `src/interfaces/IRelayEntrypoint.sol`, regenerate
+`verification/`, and bump the salt to `v2`.
 
 ## Before deploying
 
-Open items, in order. Nothing below is automated; each step is a human decision or a manual run.
-
-1. **Wait for Aero's final Relay code.** The pin is `1.0.0-provisional.3`, which is undeployed. Refresh
-   `test/upstream/` to the final commit (see `UPSTREAM.md`) and run `forge test --match-path test/Selectors.t.sol`.
-   If anything fails, fix `src/interfaces/IRelayEntrypoint.sol`, regenerate `verification/`, and bump the salt.
-2. **Deploy and verify** (sections below), then confirm the on-chain address equals `deployment.address` in
+1. **Wait for Aero's final Relay code** and refresh the pin as above.
+2. **Deploy and verify** (below), then confirm the on-chain address equals `deployment.address` in
    `verification/bytecode-hashes.json`.
-3. **Hand off.** Pass the address as `converter` in `RelayFactory.createMaxiRelay` (table above). The slot is
-   set once at creation, so check the address twice.
+3. **Hand off** the address as `converter` in `createMaxiRelay`. The slot is set once; check the address twice.
 
 ## Build and test
 
@@ -104,84 +89,46 @@ git clone --recurse-submodules https://github.com/ldeso/relay-fee-skim
 forge build --sizes
 forge test
 FOUNDRY_PROFILE=ci forge test        # 10_000 fuzz runs, what CI runs
-forge lint --deny warnings           # what CI runs; needs the pinned forge, see below
+forge lint --deny warnings           # what CI runs; needs the pinned forge
 ```
 
-`foundry.toml` pins `solc 0.8.36` to match the Relay's own compiler (move only when Aero's final code does),
-`evm_version = "prague"`, optimizer on at 1,000,000 runs, `bytecode_hash = "ipfs"`, `cbor_metadata = true`.
-Bytecode depends on solc and those settings, not on the forge release. `forge-std` is a submodule used by
-tests and scripts only.
-
-CI pins Foundry `v1.8.1` exactly (never `stable`). Two things in the repo assume that release: the
-`[lint]` block in `foundry.toml` names 1.8.x lint ids, so `forge lint` on an older forge errors with
-"Unknown lint ID" (`forge build` and `forge test` are unaffected), and `verification/RelayFeeSkim.standard-input.json`
-is shaped by the forge that generated it (see Verify).
+`foundry.toml` pins solc 0.8.36 to match the Relay's compiler, `prague`, optimizer at 1,000,000 runs and
+ipfs metadata. Bytecode depends on those, not on the forge release. CI pins Foundry `v1.8.1` exactly because
+the `[lint]` ids and the committed standard JSON input are shaped by that release; `forge build` and
+`forge test` work on any recent forge.
 
 ## Deploy
 
-CREATE2 through forge's default deterministic deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`) with
-salt `keccak256("klimaprotocol.com/RelayFeeSkim/v1")`. The address depends on the constructor
-arguments **and on the exact creation bytecode**, which includes the ipfs metadata hash of the sources: a
-comment edit in `src/` or a compiler-setting change moves it. Run `script/check-hashes.sh` before
-re-running the script against a chain that already has a deployment.
-
-`FEE_BPS` (500, 5%) and `FEE_SINK` (`0xf624f9Fe1D3165c5Ca32c7Fbdbf82f4a5b1D2d0e`, a Safe on Base) are
-constants of `script/Deploy.s.sol`. Changing either changes the address. The predicted address, constructor
-args and init-code hash are recorded under `deployment` in `verification/bytecode-hashes.json` and
-recomputed by `script/check-hashes.sh`.
+CREATE2 through forge's default deployer (`0x4e59b44847b379578588920cA78FbF26c0B4956C`) with salt
+`keccak256("klimaprotocol.com/RelayFeeSkim/v1")`. `FEE_BPS` (500) and `FEE_SINK`
+(`0xf624f9Fe1D3165c5Ca32c7Fbdbf82f4a5b1D2d0e`, a Safe on Base) are constants of `script/Deploy.s.sol`. The
+address depends on those arguments and on the exact bytecode, metadata hash included, so a comment edit in
+`src/` moves it; the predicted address is recorded under `deployment` in `verification/bytecode-hashes.json`.
 
 ```
-# preview the address
 forge script script/Deploy.s.sol --sig "predict(uint256,address)" 500 0xf624f9Fe1D3165c5Ca32c7Fbdbf82f4a5b1D2d0e
-
-# deploy (no-op if the predicted address already has code)
 forge script script/Deploy.s.sol --rpc-url $RPC_URL --broadcast --private-key $PK
 ```
 
-The script range-checks both values, asserts the deployed address equals the prediction, and reads
-`FEE_BPS` and `FEE_SINK` back from the chain. The Base broadcast log, `broadcast/Deploy.s.sol/8453/run-latest.json`,
-is the one broadcast artifact kept under version control; commit it with the deployment.
+The script is a no-op if the address already has code. Commit `broadcast/Deploy.s.sol/8453/run-latest.json`
+with the deployment; it is the one broadcast artifact not ignored.
 
 ## Verify
 
-Constructor args:
-
 ```
 ARGS=$(cast abi-encode 'constructor(uint256,address)' 500 0xf624f9Fe1D3165c5Ca32c7Fbdbf82f4a5b1D2d0e)
-```
-
-Basescan:
-
-```
 forge verify-contract --chain base --verifier etherscan --etherscan-api-key $BASESCAN_API_KEY \
   --constructor-args $ARGS $ADDRESS src/RelayFeeSkim.sol:RelayFeeSkim
-```
-
-Sourcify:
-
-```
 forge verify-contract --chain base --verifier sourcify \
   --constructor-args $ARGS $ADDRESS src/RelayFeeSkim.sol:RelayFeeSkim
 ```
 
-Committed under `verification/`:
-
-- `RelayFeeSkim.standard-input.json`: the solc standard JSON input, for manual verification. Regenerate
-  with the pinned forge:
-  `forge verify-contract --show-standard-json-input 0x0000000000000000000000000000000000000001 src/RelayFeeSkim.sol:RelayFeeSkim > verification/RelayFeeSkim.standard-input.json`.
-  `script/check-standard-input.sh` compares only the sources and the bytecode-relevant settings, so it
-  passes on any forge release; the rest of the file is whatever forge emitted.
-- `bytecode-hashes.json`: salt, CREATE2 deployer, keccak of the creation code and of the runtime template
-  (immutable slots zeroed), the compiler settings read back from the build artifact's metadata, and the
-  canonical deployment: constructor args, init-code hash, predicted address and the keccak of the runtime
-  bytecode with immutables filled in. Written by `forge script script/Hashes.s.sol`.
-  `script/check-hashes.sh` compares a fresh build against every recorded value, recomputes the deployment
-  values from the record, and fails if any key is missing.
-
-CI runs `forge fmt --check`, `forge build --sizes`, `forge lint --deny warnings`, `forge test` at the high
-fuzz profile, the sha256 check of the vendored upstream files, `reuse lint`, and a reproducible-build job
-that builds twice from clean, compares the bytecode, and fails on any drift from the recorded hashes or the
-committed standard JSON input.
+`verification/` holds the solc standard JSON input (regenerate with
+`forge verify-contract --show-standard-json-input 0x0000000000000000000000000000000000000001 src/RelayFeeSkim.sol:RelayFeeSkim`)
+and `bytecode-hashes.json`, written by `forge script script/Hashes.s.sol`: salt, deployer, creation and
+runtime-template keccaks, compiler settings from the artifact, and the deployment's constructor args,
+init-code hash, address and runtime keccak. `script/check-hashes.sh` and `script/check-standard-input.sh`
+compare a fresh build against both files; CI runs them after two clean builds that must be byte-identical.
 
 ## Layout
 
@@ -191,21 +138,20 @@ src/interfaces/IRelayEntrypoint.sol  the two Relay members it calls, plus the tw
 src/interfaces/IERC20Minimal.sol     balanceOf, transfer
 script/Deploy.s.sol                  CREATE2 deploy + predict
 script/Hashes.s.sol                  writes verification/bytecode-hashes.json
-script/check-hashes.sh               CI drift check (hashes + compiler settings)
-script/check-standard-input.sh       CI check that the committed standard JSON input is current
-test/RelayFeeSkim.t.sol              behaviour, fuzz, token edge cases, reentrancy (same-token and cross-token)
+script/check-hashes.sh               CI drift check against bytecode-hashes.json
+script/check-standard-input.sh       CI drift check against the standard JSON input
+test/RelayFeeSkim.t.sol              behaviour, fuzz, token edge cases, reentrancy
 test/Selectors.t.sol                 upstream selector pin
-test/Deploy.t.sol                    deploy script against forge's pre-deployed CREATE2 deployer
+test/Deploy.t.sol                    deploy script
 test/mocks/                          MockRelay (upstream semantics), MockERC20 variants
 test/upstream/                       vendored MIT interfaces + UPSTREAM.md + SHA256SUMS
 verification/                        standard JSON input, bytecode hashes
-LICENSES/, REUSE.toml                license texts and REUSE annotations for files without comment syntax
+LICENSES/, REUSE.toml                license texts and REUSE annotations
 ```
 
 ## License
 
-MIT, and [REUSE](https://reuse.software) compliant: every file carries `SPDX-FileCopyrightText` and
-`SPDX-License-Identifier` tags, except the checksum list and the generated files under `verification/`,
-which `REUSE.toml` covers. License texts live in `LICENSES/`; the root `LICENSE` is the same MIT text for
-GitHub's benefit. The vendored files under `test/upstream/` are MIT-licensed upstream code reproduced
-unmodified, with their copyright holder recorded in `REUSE.toml`. CI runs `reuse lint`.
+MIT, [REUSE](https://reuse.software) compliant. Every file carries SPDX tags except the checksum list and the
+generated `verification/` files, which `REUSE.toml` covers. The vendored upstream files are MIT code
+reproduced unmodified with their copyright holder recorded in `REUSE.toml`. The root `LICENSE` duplicates
+`LICENSES/MIT.txt` for GitHub's benefit.
