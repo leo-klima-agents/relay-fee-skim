@@ -7,7 +7,7 @@ SPDX-FileCopyrightText = "2026 Perpetual Cyclist Services LLC"
 SPDX-License-Identifier = "MIT"
 
 [[annotations]]
-path = ["test/upstream/SHA256SUMS", "foundry.lock"]
+path = ["test/upstream/SHA256SUMS", "foundry.lock", "broadcast/Deploy.s.sol/8453/run-latest.json"]
 SPDX-FileCopyrightText = "2026 Klima Protocol"
 SPDX-License-Identifier = "MIT"
 
